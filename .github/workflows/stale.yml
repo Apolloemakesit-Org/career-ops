@@ -1,4 +1,4 @@
-﻿name: 'Close stale issues and PRs'
+name: 'Close stale issues and PRs'
 on:
   schedule:
     - cron: '0 6 * * 1' # Every Monday at 6am UTC
@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   stale:
-    runs-on: [self-hosted, Linux, X64, local]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@v10
         with:
           stale-issue-message: >
             This issue has been automatically marked as stale because it has not had
