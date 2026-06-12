@@ -1,0 +1,52 @@
+﻿# Workspace rules — career-ops
+
+Project rules for Windsurf/Devin (Cascade). Keep thin — durable project
+knowledge lives in `memories/PROJECT_CONTEXT.md`.
+
+## Before any work (do not skip)
+
+1. Read `memories/PROJECT_CONTEXT.md` — canonical project state and the last
+   session's handoff note (possibly written by Claude CLI, Codex CLI, Antigravity CLI, or
+   Devin CLI; treat it as your own prior work).
+   **If this file is missing or empty, this project is not onboarded.**
+   Run the scaffold yourself in the integrated terminal (do not ask the user):
+   - Windows: `& "$env:USERPROFILE\.local\bin\new-project-init.ps1" .`
+   - macOS/Linux: `new-project-init .`
+   Then invoke `/project-onboard` or ask Cascade to "onboard this project per
+   the shared agent protocol" before any substantive work.
+2. Read the header of `memories/graph-snapshot.md` for the dependency
+   topology. If missing or stale, regenerate per
+   `~/.agents/instructions/graphify.instructions.md`.
+3. Follow the shared protocol: `~/.agents/AGENT_PROTOCOL.md`.
+
+## Before you stop (mandatory — no mechanical enforcement in IDE)
+
+YOU must enforce this yourself. Cascade will not remind you.
+
+1. Update `memories/PROJECT_CONTEXT.md`:
+   - Bump the "Last updated:" line.
+   - Sprint Goal — still correct? Edit or delete.
+   - Decisions Log — append any new decisions with WHY.
+   - Pitfalls — append anything that burned this session.
+   - Open Tasks — check off completed, add new, delete stale.
+2. Rewrite the **Last Session Handoff Note** (Section 7) from scratch:
+   - **From:** this tool / **To:** any
+   - **When:** today's date
+   - **Task:** one-line summary of what this session did
+   - **Current files:** any files still in progress
+   - **Last changes:** files touched and what changed
+   - **Graph snapshot:** refreshed? (yes/no + commit)
+   - **Verified:** what was checked (tests, lint, build)
+   - **Unresolved questions:** anything blocking or unclear
+   - **Next immediate action:** what the next agent should do first
+3. If the architecture changed, refresh `memories/graph-snapshot.md` first.
+4. Mirror any Cascade Memory you created into `memories/PROJECT_CONTEXT.md`.
+   Other tools cannot read Cascade Memories. File-based memory wins on conflict.
+
+## Project specifics
+
+- Build/test: root CI gate is `node test-all.mjs --quick`; dashboard package tests are `npm --prefix apps/job-dashboard test`; tracker health is `node verify-pipeline.mjs`.
+- Local dashboard: start from `apps/job-dashboard/scripts/start-local.ps1`; server is `127.0.0.1:3000`, runner control is `127.0.0.1:48731`.
+- Data contract: user layer (`cv.md`, `config/profile.yml`, `modes/_profile.md`, `portals.yml`, `data/*`, `reports/*`, `output/*`) is personal; never move personalization into system files.
+- Tracker rule: add new evaluations via TSV in `batch/tracker-additions/` and `node merge-tracker.mjs`; edit `data/applications.md` only for existing rows.
+- Current active work: fix `memories/session/review.md` Reviewer FAIL findings before new dashboard features.

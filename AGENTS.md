@@ -1,5 +1,15 @@
 # Career-Ops -- AI Job Search Pipeline
 
+## Shared Agent Context
+
+Before substantive work, read `memories/PROJECT_CONTEXT.md`, its Last Session
+Handoff Note, the newest relevant file in `memories/session/`, the header of
+`memories/graph-snapshot.md`, and `MAP.md`. At session end, update
+`memories/PROJECT_CONTEXT.md` and rewrite the handoff note. Current validation
+anchors: `node test-all.mjs --quick` for the repo, `npm --prefix
+apps/job-dashboard test` for the local dashboard, and `node verify-pipeline.mjs`
+for tracker health.
+
 ## Origin
 
 This system was built and used by [santifer](https://santifer.io) to evaluate 740+ job offers, generate 100+ tailored CVs, and land a Head of Applied AI role. The archetypes, scoring logic, negotiation scripts, and proof point structure all reflect his specific career search in AI/automation roles.

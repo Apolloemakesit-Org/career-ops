@@ -380,6 +380,21 @@ function renderPackages() {
       await loadAll();
     });
   });
+  document.querySelectorAll('[data-generate-pdf]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const originalText = button.textContent;
+      button.textContent = 'Generating...';
+      button.disabled = true;
+      try {
+        await api(`/api/packages/${button.dataset.generatePdf}/pdf`, { method: 'POST' });
+        await loadAll();
+      } catch (error) {
+        alert(`PDF generation failed: ${error.message}`);
+        button.textContent = originalText;
+        button.disabled = false;
+      }
+    });
+  });
   document.querySelectorAll('[data-copy-cover-letter]').forEach(button => {
     button.addEventListener('click', () => copyPackageCoverLetter(button.dataset.copyCoverLetter, button));
   });
@@ -446,6 +461,8 @@ function renderPackageReviewCard(pkg) {
           </div>
           <div class="dialog-actions">
             ${pkg.jobUrl ? `<a class="secondary-button action-link" href="${escapeHtml(pkg.jobUrl)}" target="_blank" rel="noopener">Open job</a>` : ''}
+            ${pkg.cvPdfPath ? `<a class="secondary-button action-link" href="/${escapeHtml(pkg.cvPdfPath)}" download target="_blank">Download PDF</a>` : ''}
+            <button class="secondary-button" data-generate-pdf="${escapeHtml(pkg.id)}" ${!pkg.tailoredCvMd ? 'disabled' : ''}>Generate PDF</button>
             <button class="primary-button" data-approve="${escapeHtml(pkg.id)}" ${pkg.approvalState === 'approved' ? 'disabled' : ''}>Approve</button>
           </div>
         </section>

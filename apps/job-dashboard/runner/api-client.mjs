@@ -123,6 +123,11 @@ function queryString(filters = {}) {
     const value = portals.map(item => String(item || '').trim()).filter(Boolean).join(',');
     if (value) params.set('portal', value);
   }
+  if (filters.status) {
+    const statuses = Array.isArray(filters.status) ? filters.status : [filters.status];
+    const value = statuses.map(item => String(item || '').trim()).filter(Boolean).join(',');
+    if (value) params.set('status', value);
+  }
   const text = params.toString();
   return text ? `?${text}` : '';
 }
