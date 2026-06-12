@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { createRunnerClient } from './api-client.mjs';
 import { launchBrowserContext } from './browser-profile.mjs';
 import { buildRequiredFields, fillKnownFields } from './form-filler.mjs';
 import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
+
+const runnerDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(runnerDir, '..', '..', '..');
 
 const localEnv = envFromLocalConfig(loadLocalConfig());
 const env = { ...localEnv, ...process.env };
@@ -46,6 +52,14 @@ try {
       profile,
       coverLetter: pkg.coverLetter || '',
     });
+
+    if (pkg.cvPdfPath) {
+      fields.cv = path.resolve(repoRoot, pkg.cvPdfPath);
+    }
+    if (pkg.coverLetterPdfPath) {
+      fields.cover_letter_pdf = path.resolve(repoRoot, pkg.coverLetterPdfPath);
+    }
+
     const portalConfig = portals.find(item => item.portal === pkg.portal) || {};
     await fillKnownFields(page, fields, missingFields, {
       fieldHints: portalConfig.fieldHints || {},

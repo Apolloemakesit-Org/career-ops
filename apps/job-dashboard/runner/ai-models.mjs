@@ -6,6 +6,7 @@ const anthropicGatewayModels = {
   'claude-opus-4-6': 'SubscriptionGateway/claude-opus-4-6',
   'claude-sonnet-4-5': 'claude-sonnet-4-5',
   'claude-haiku-4-5': 'SubscriptionGateway/claude-haiku-4-5-20251001',
+  'claude-haiku-4-5-20251001': 'SubscriptionGateway/claude-haiku-4-5-20251001',
   'claude-opus-4-5': 'claude-opus-4-5',
 };
 
@@ -31,6 +32,7 @@ const anthropicModels = [
   'claude-opus-4-6',
   'claude-sonnet-4-5',
   'claude-haiku-4-5',
+  'claude-haiku-4-5-20251001',
   'claude-opus-4-5',
 ];
 
@@ -53,30 +55,51 @@ export function listConfiguredAiModels() {
   ];
 }
 
-export function cheapModelTestPlan() {
+export function cheapModelTestPlan(root = cliProxyRoot) {
   return [
-    normalizeSelectedAiModel({ provider: 'openai', model: 'gpt-5.4-mini' }),
-    normalizeSelectedAiModel({ provider: 'anthropic', model: 'claude-haiku-4-5' }),
+    normalizeSelectedAiModel({ provider: 'openai', model: 'gpt-5.4-mini', root }),
+    normalizeSelectedAiModel({ provider: 'anthropic', model: 'claude-haiku-4-5', root }),
   ];
 }
 
-export function normalizeSelectedAiModel({ provider = 'openai', model = '' } = {}) {
+export function normalizeSelectedAiModel({ provider = 'openai', model = '', root = cliProxyRoot } = {}) {
   const normalizedProvider = String(provider || 'openai').trim().toLowerCase();
   const selected = String(model || '').trim();
-  const gatewayModel = normalizedProvider === 'anthropic'
-    ? (anthropicGatewayModels[selected] || selected || anthropicGatewayModels['claude-haiku-4-5'])
-    : (selected || 'gpt-5.4-mini');
+  const baseUrl = providerBaseUrl(normalizedProvider, root);
+  
+  // If we are pointing at a direct V1 endpoint (generic/clawopen), 
+  // we bypass the SubscriptionGateway/ mapping.
+  const isDirectV1 = baseUrl.endsWith('/v1') && !baseUrl.includes('/api/provider/');
+
+  let gatewayModel = selected;
+  if (normalizedProvider === 'anthropic') {
+    gatewayModel = anthropicGatewayModels[selected] || selected || anthropicGatewayModels['claude-haiku-4-5'];
+  } else if (!selected) {
+    gatewayModel = 'gpt-5.4-mini';
+  }
+
+  if (isDirectV1 && gatewayModel.startsWith('SubscriptionGateway/')) {
+    gatewayModel = gatewayModel.replace(/^SubscriptionGateway\//, '');
+  }
 
   return {
     provider: normalizedProvider,
     model: gatewayModel,
     requestedModel: selected || gatewayModel,
-    baseUrl: providerBaseUrl(normalizedProvider),
+    baseUrl,
   };
 }
 
 export function providerBaseUrl(provider, root = cliProxyRoot) {
-  return `${String(root).replace(/\/$/, '')}/api/provider/${provider === 'anthropic' ? 'anthropic' : 'openai'}/v1`;
+  const normalizedRoot = String(root || cliProxyRoot).replace(/\/$/, '');
+  
+  // If the root already ends in /v1, it's a direct provider endpoint or a generic proxy (clawopen)
+  if (normalizedRoot.endsWith('/v1')) {
+    return normalizedRoot;
+  }
+
+  // Otherwise fallback to the CLIProxyAPI multi-provider path
+  return `${normalizedRoot}/api/provider/${provider === 'anthropic' ? 'anthropic' : 'openai'}/v1`;
 }
 
 export function parseGatewayModelIds(payload = {}) {

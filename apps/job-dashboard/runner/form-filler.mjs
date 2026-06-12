@@ -7,6 +7,7 @@ export const fieldAliases = {
   location: ['location', 'Location', 'City', 'Oras', 'Locatie'],
   linkedin: ['linkedin', 'LinkedIn', 'LinkedIn profile', 'Profil LinkedIn'],
   github: ['github', 'GitHub', 'GitHub profile', 'Portfolio'],
+  cv: ['cv', 'CV', 'Resume', 'Curriculum Vitae', 'Upload CV', 'Upload resume', 'upload_resume', 'attach_resume'],
   cover_letter: ['cover_letter', 'Cover letter', 'Scrisoare de intentie', 'Message to recruiter', 'Additional information'],
   work_authorization: ['work_authorization', 'Work authorization', 'Drept de munca', 'Authorized to work'],
   salary_expectation: ['salary_expectation', 'Salary expectation', 'Expected salary', 'Salariu dorit', 'Pretentii salariale'],
@@ -50,18 +51,34 @@ export async function fillKnownFields(page, fields, missingFields = {}, options 
 }
 
 export async function tryFillField(page, label, value, fieldHints = {}) {
+  const isFileField = label === 'cv' || label === 'resume' || label === 'cover_letter_pdf';
+
   for (const candidate of buildFieldCandidates(label, fieldHints)) {
     const locators = [
       page.getByLabel(candidate),
       page.getByPlaceholder(candidate),
       page.locator(`[name="${cssEscape(candidate)}"]`),
       page.locator(`[aria-label="${cssEscape(candidate)}"]`),
+      // Common for file inputs
+      page.locator(`input[type="file"]`),
     ];
 
     for (const locator of locators) {
       try {
         if (await locator.count() > 0) {
-          const target = locator.first();
+          const target = isFileField && (await locator.count() > 1) 
+            ? locator.filter({ hasText: new RegExp(candidate, 'i') }).first() 
+            : locator.first();
+
+          if (isFileField) {
+            // For file inputs, we might need a more direct selector if getByLabel fails
+            const type = await target.getAttribute('type').catch(() => '');
+            if (type === 'file') {
+              await target.setInputFiles(String(value), { timeout: 2000 });
+              return true;
+            }
+          }
+
           if (await target.isEditable({ timeout: 1000 }).catch(() => false)) {
             await target.fill(String(value), { timeout: 2000 });
             return true;

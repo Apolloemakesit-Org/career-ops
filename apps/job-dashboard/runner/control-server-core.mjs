@@ -113,8 +113,9 @@ export function createControlHandler({
 
     if (method === 'GET' && parsed.pathname === '/ai/models') {
       const config = loadConfig();
+      const rootUrl = aiRootUrl(config);
       const gateway = config.aiProxyApiKey
-        ? await listModels({ apiKey: config.aiProxyApiKey })
+        ? await listModels({ apiKey: config.aiProxyApiKey, rootUrl })
         : { ids: [], ok: false, status: 0 };
       return response(200, {
         gateway,
@@ -129,6 +130,7 @@ export function createControlHandler({
         provider: (body || {}).provider || config.aiProvider,
         model: (body || {}).model || config.aiModel,
         apiKey: config.aiProxyApiKey,
+        rootUrl: aiRootUrl(config),
       }));
     }
 
@@ -136,7 +138,10 @@ export function createControlHandler({
       const config = loadConfig();
       if (!config.aiProxyApiKey) return response(424, missingProxyKey());
       return response(200, {
-        results: await testCheapModels({ apiKey: config.aiProxyApiKey }),
+        results: await testCheapModels({ 
+          apiKey: config.aiProxyApiKey,
+          rootUrl: aiRootUrl(config),
+        }),
       });
     }
 
@@ -234,6 +239,17 @@ export function createControlHandler({
       });
     }
   }
+}
+
+function aiRootUrl(config = {}) {
+  if (config.cliProxyUrl) return String(config.cliProxyUrl).replace(/\/$/, '');
+  
+  // If aiBaseUrl is set, we try to extract the root from it or use it as is if it looks like a V1 endpoint
+  const base = String(config.aiBaseUrl || 'http://127.0.0.1:8317');
+  if (base.endsWith('/v1')) return base;
+  
+  const match = base.match(/^https?:\/\/[^/]+/i);
+  return match ? match[0] : 'http://127.0.0.1:8317';
 }
 
 function cliProxyBaseUrl(config = {}) {

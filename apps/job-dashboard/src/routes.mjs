@@ -8,6 +8,9 @@ import { invalidateCvCache } from './cv-parser.mjs';
 import { scoreJobFit } from './fit-score.mjs';
 import { invalidateProjectsCache } from './projects-loader.mjs';
 import { deriveJobFields } from './job-derivers.mjs';
+import { generatePackagePdf } from './pdf-generator.mjs';
+import { analyzeCadence } from './cadence-analyzer.mjs';
+import { analyzePatterns } from './pattern-analyzer.mjs';
 import {
   generateAiFitScore as defaultGenerateAiFitScore,
   generateApplicationPackage as defaultGenerateApplicationPackage,
@@ -231,12 +234,45 @@ export async function dispatchApi(request, store, services = {}) {
       return json(200, await store.approvePackage(segments[2]));
     }
 
+    if (method === 'POST' && segments[0] === 'api' && segments[1] === 'packages' && segments[3] === 'pdf') {
+      const pkg = await store.getPackage(segments[2]);
+      if (!pkg) return json(404, { error: 'package_not_found' });
+      const profile = await store.getProfile();
+      try {
+        const result = await generatePackagePdf(pkg, profile);
+        await store.updatePackagePdf(segments[2], { cvPdfPath: result.relativePath });
+        return json(200, { ...result, packageId: segments[2] });
+      } catch (error) {
+        return json(500, { error: 'pdf_generation_failed', message: error.message });
+      }
+    }
+
     if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'packages' && segments[3] === 'runner') {
       return json(200, await store.updateRunnerStatus(segments[2], request.body || {}));
     }
 
     if (method === 'GET' && url.pathname === '/api/events') {
       return json(200, await store.listEvents({ since: url.searchParams.get('since') || undefined }));
+    }
+
+    if (method === 'GET' && url.pathname === '/api/cadence') {
+      const jobs = await store.listJobs({ status: 'applied,responded,interview' });
+      const followUps = await store.listAllFollowUps();
+      const profile = await store.getProfile();
+      return json(200, analyzeCadence(jobs, followUps, profile.followup_cadence || {}));
+    }
+
+    if (method === 'GET' && url.pathname === '/api/patterns') {
+      const jobs = await store.listJobs({ limit: 5000 });
+      return json(200, analyzePatterns(jobs));
+    }
+
+    if (method === 'GET' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'follow-ups') {
+      return json(200, await store.listFollowUps(segments[2]));
+    }
+
+    if (method === 'POST' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'follow-ups') {
+      return json(201, await store.createFollowUp(segments[2], request.body || {}));
     }
 
     if (method === 'GET' && url.pathname === '/api/runner/state') {
@@ -270,6 +306,11 @@ export async function dispatchApi(request, store, services = {}) {
 
     if (method === 'GET' && url.pathname === '/api/runner/progress') {
       return json(200, await proxyRunner(fetchImpl, '/progress'));
+    }
+
+    if (method === 'GET' && url.pathname === '/api/runner/events') {
+      // Handled as SSE in server.mjs, but we return a marker here for routing completeness
+      return { sse: true, path: '/events' };
     }
 
     if (method === 'POST' && url.pathname === '/api/runner/commands/claim') {
@@ -503,7 +544,7 @@ export function createPostgresStore(pool) {
       const derived = deriveJobFields(job);
       const result = await pool.query(`
         INSERT INTO jobs (
-          url, company, title, portal, location, description, source, status,
+          url, company, title, portal, location, description, source, status, notes,
           fit_score, fit_category, matched_skills, missing_skills, risk_flags,
           recommendation, fit_reasons,
           salary_min, salary_max, salary_currency, salary_period, work_model,
@@ -511,8 +552,8 @@ export function createPostgresStore(pool) {
           cv_match_score, cv_matched_skills, cv_matched_projects, cv_missing_skills,
           cv_match_breakdown, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15::jsonb,
-                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26::jsonb, $27::jsonb, $28::jsonb, $29::jsonb, now())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16::jsonb,
+                $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27::jsonb, $28::jsonb, $29::jsonb, $30::jsonb, now())
         ON CONFLICT (url) DO UPDATE SET
           company = EXCLUDED.company,
           title = EXCLUDED.title,
@@ -521,6 +562,7 @@ export function createPostgresStore(pool) {
           description = EXCLUDED.description,
           source = EXCLUDED.source,
           status = EXCLUDED.status,
+          notes = CASE WHEN EXCLUDED.notes != '' THEN EXCLUDED.notes ELSE jobs.notes END,
           fit_score = EXCLUDED.fit_score,
           fit_category = EXCLUDED.fit_category,
           matched_skills = EXCLUDED.matched_skills,
@@ -566,6 +608,7 @@ export function createPostgresStore(pool) {
         job.description || '',
         job.source || 'dashboard',
         job.status || 'discovered',
+        job.notes || '',
         fit.score,
         fit.category,
         JSON.stringify(fit.matchedSkills),
@@ -746,7 +789,9 @@ export function createPostgresStore(pool) {
         SELECT p.id, p.job_id AS "jobId", p.cover_letter AS "coverLetter",
                p.tailored_cv_md AS "tailoredCvMd", p.required_fields AS "requiredFields",
                p.missing_fields AS "missingFields", p.approval_state AS "approvalState",
-               p.runner_status AS "runnerStatus", p.created_at AS "createdAt", p.updated_at AS "updatedAt",
+               p.runner_status AS "runnerStatus",
+               p.cv_pdf_path AS "cvPdfPath", p.cover_letter_pdf_path AS "coverLetterPdfPath",
+               p.created_at AS "createdAt", p.updated_at AS "updatedAt",
                j.url AS "jobUrl", j.company, j.title, j.portal, j.location, j.status AS "jobStatus",
                j.fit_score AS "fitScore", j.fit_category AS "fitCategory",
                j.matched_skills AS "matchedSkills", j.missing_skills AS "missingSkills",
@@ -761,6 +806,20 @@ export function createPostgresStore(pool) {
         LIMIT 200
       `, params);
       return result.rows;
+    },
+
+    async getPackage(id) {
+      const result = await pool.query(`
+        SELECT id, job_id AS "jobId", cover_letter AS "coverLetter",
+               tailored_cv_md AS "tailoredCvMd", required_fields AS "requiredFields",
+               missing_fields AS "missingFields", approval_state AS "approvalState",
+               runner_status AS "runnerStatus",
+               cv_pdf_path AS "cvPdfPath", cover_letter_pdf_path AS "coverLetterPdfPath",
+               created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM application_packages
+        WHERE id = $1
+      `, [id]);
+      return result.rows[0] || null;
     },
 
     async createPackage(jobId, payload) {
@@ -810,6 +869,28 @@ export function createPostgresStore(pool) {
         RETURNING id, job_id AS "jobId", approval_state AS "approvalState", runner_status AS "runnerStatus"
       `, [id]);
       await appendEvent(pool, 'package', id, 'package_approved', 'Application package approved for local runner', {});
+      return result.rows[0] || null;
+    },
+
+    async updatePackagePdf(id, { cvPdfPath, coverLetterPdfPath }) {
+      const updates = [];
+      const params = [id];
+      if (cvPdfPath !== undefined) {
+        params.push(cvPdfPath);
+        updates.push(`cv_pdf_path = $${params.length}`);
+      }
+      if (coverLetterPdfPath !== undefined) {
+        params.push(coverLetterPdfPath);
+        updates.push(`cover_letter_pdf_path = $${params.length}`);
+      }
+      if (updates.length === 0) return null;
+      
+      const result = await pool.query(`
+        UPDATE application_packages
+        SET ${updates.join(', ')}, updated_at = now()
+        WHERE id = $1
+        RETURNING id, job_id AS "jobId", cv_pdf_path AS "cvPdfPath", cover_letter_pdf_path AS "coverLetterPdfPath"
+      `, params);
       return result.rows[0] || null;
     },
 
@@ -1005,6 +1086,41 @@ export function createPostgresStore(pool) {
         Number.isFinite(Number(payload.exitCode)) ? Number(payload.exitCode) : null,
       ]);
       return result.rows[0] || null;
+    },
+
+    async listAllFollowUps() {
+      const result = await pool.query(`
+        SELECT id, job_id AS "jobId", date, channel, contact, notes, created_at AS "createdAt"
+        FROM follow_ups
+        ORDER BY date DESC
+      `);
+      return result.rows;
+    },
+
+    async listFollowUps(jobId) {
+      const result = await pool.query(`
+        SELECT id, job_id AS "jobId", date, channel, contact, notes, created_at AS "createdAt"
+        FROM follow_ups
+        WHERE job_id = $1
+        ORDER BY date DESC
+      `, [jobId]);
+      return result.rows;
+    },
+
+    async createFollowUp(jobId, payload) {
+      const result = await pool.query(`
+        INSERT INTO follow_ups (job_id, date, channel, contact, notes)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, job_id AS "jobId", date, channel, contact, notes, created_at AS "createdAt"
+      `, [
+        jobId,
+        payload.date || new Date().toISOString(),
+        payload.channel || '',
+        payload.contact || '',
+        payload.notes || '',
+      ]);
+      await appendEvent(pool, 'job', jobId, 'follow_up_created', `Follow-up recorded via ${payload.channel || 'unknown'}`, payload);
+      return result.rows[0];
     },
   };
 }
@@ -1248,7 +1364,12 @@ function buildJobsWhere(filters = {}, dialect = 'postgres') {
   if (filters.portal?.length) {
     clauses.push(`portal IN (${filters.portal.map(add).join(', ')})`);
   }
-  if (filters.status) clauses.push(`status = ${add(filters.status)}`);
+  if (filters.status) {
+    const statuses = Array.isArray(filters.status) ? filters.status : filters.status.split(',').map(s => s.trim()).filter(Boolean);
+    if (statuses.length > 0) {
+      clauses.push(`status IN (${statuses.map(add).join(', ')})`);
+    }
+  }
   if (filters.minSalary != null) clauses.push(`salary_min >= ${add(filters.minSalary)}`);
   if (filters.maxSalary != null) clauses.push(`salary_max <= ${add(filters.maxSalary)}`);
   if (filters.currency) clauses.push(`salary_currency = ${add(filters.currency)}`);
@@ -1302,15 +1423,19 @@ function jobIncompleteSql() {
 }
 
 async function proxyRunner(fetchImpl, pathName, { method = 'GET', body } = {}) {
-  const response = await fetchImpl(`http://127.0.0.1:48731${pathName}`, {
-    method,
-    headers: body ? { 'content-type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!response.ok) {
-    return { error: 'runner_unreachable', status: response.status };
+  try {
+    const response = await fetchImpl(`http://127.0.0.1:48731${pathName}`, {
+      method,
+      headers: body ? { 'content-type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      return { error: 'runner_unreachable', status: response.status };
+    }
+    return await response.json();
+  } catch (error) {
+    return { offline: true, error: 'runner_offline', message: error.message };
   }
-  return response.json();
 }
 
 function csvParam(value) {

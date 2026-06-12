@@ -14,6 +14,7 @@
     "draft:ai": "node runner/ai-draft-runner.mjs",
     "test:models": "node runner/test-ai-models.mjs",
     "smoke:portals": "node runner/portal-smoke-runner.mjs",
+    "liveness:sweep": "node runner/liveness-sweep-runner.mjs",
     "login:browser": "node runner/open-login-browser.mjs",
     "runner:control": "node runner/control-server.mjs",
     "run:applications": "node runner/playwright-runner.mjs"

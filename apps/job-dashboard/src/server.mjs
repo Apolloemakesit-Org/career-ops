@@ -33,13 +33,21 @@ export function createDashboardServer({
       return;
     }
 
-    if (req.url?.startsWith('/api/')) {
-      if (req.method === 'GET' && req.url.startsWith('/api/runner/events')) {
+    const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    if (parsedUrl.pathname.startsWith('/api/')) {
+      if (req.method === 'GET' && parsedUrl.pathname === '/api/runner/events') {
         await proxyRunnerEvents(res);
         return;
       }
       const body = await readJsonBody(req);
       const response = await dispatchApi({ method: req.method || 'GET', url: req.url, body }, store, services);
+      
+      // If dispatchApi signals SSE (for routes it doesn't want to handle fully)
+      if (response.sse) {
+        await proxyRunnerEvents(res, response.path);
+        return;
+      }
+
       writeJson(res, response.status, response.body);
       return;
     }
@@ -48,10 +56,10 @@ export function createDashboardServer({
   });
 }
 
-async function proxyRunnerEvents(res) {
+async function proxyRunnerEvents(res, pathName = '/events') {
   let upstream;
   try {
-    upstream = await fetch('http://127.0.0.1:48731/events');
+    upstream = await fetch(`http://127.0.0.1:48731${pathName}`);
   } catch {
     writeJson(res, 502, { error: 'runner_unreachable' });
     return;

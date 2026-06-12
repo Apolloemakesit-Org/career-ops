@@ -27,14 +27,16 @@ export async function listGatewayModels({
 }
 
 export async function testCheapGatewayModels({
+  rootUrl = defaultRoot,
   apiKey = '',
   fetchImpl = fetch,
 } = {}) {
   const results = [];
-  for (const item of cheapModelTestPlan()) {
+  for (const item of cheapModelTestPlan(rootUrl)) {
     results.push(await testAiGatewayModel({
       provider: item.provider,
       model: item.model,
+      rootUrl,
       apiKey,
       fetchImpl,
     }));
@@ -45,10 +47,11 @@ export async function testCheapGatewayModels({
 export async function testAiGatewayModel({
   provider = 'openai',
   model = '',
+  rootUrl = defaultRoot,
   apiKey = '',
   fetchImpl = fetch,
 } = {}) {
-  const selected = normalizeSelectedAiModel({ provider, model });
+  const selected = normalizeSelectedAiModel({ provider, model, root: rootUrl });
   const started = performance.now();
   const endpoint = selected.provider === 'anthropic'
     ? `${selected.baseUrl}/messages`
