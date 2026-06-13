@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildAnswersPrompt,
   buildFitPrompt,
   buildPackagePrompt,
   generateAiFitScore,
@@ -10,7 +11,11 @@ import {
   generateApplicationPackageViaAnthropicMessages,
   generateApplicationPackage,
   generateApplicationPackageViaOpenAIResponses,
+  generateScreeningAnswers,
+  generateScreeningAnswersViaAnthropicMessages,
+  generateScreeningAnswersViaOpenAIResponses,
   resolveAiRuntimeConfig,
+  validateGeneratedAnswers,
   validateGeneratedFitScore,
   validateGeneratedPackage,
   coerceJsonObject,
@@ -70,6 +75,27 @@ test('builds a fit scoring prompt from profile, job, and rules score', () => {
   assert.match(prompt, /Deterministic CV match/);
   assert.match(prompt, /cv_match_score: 88/);
   assert.match(prompt, /91/);
+});
+
+test('builds a screening answers prompt grounded in voice and proof points', () => {
+  const prompt = buildAnswersPrompt({
+    profile,
+    job,
+    cv: { raw: '# CV\n\nBuilt ServiceNow automation and supported MDM devices.' },
+    projects: [{ name: 'Project Helios', description: 'Telemetry parser', tech: ['FastAPI'] }],
+    questions: ['Why are you interested in this role?', 'Do you have MDM experience?'],
+    voice: {
+      narrative: { headline: 'Support specialist who automates recurring work' },
+      articleDigest: 'Project Helios proof point.',
+      writingSamples: 'I like clear, practical technical explanations.',
+    },
+  });
+
+  assert.match(prompt, /first person/);
+  assert.match(prompt, /Do not fabricate/);
+  assert.match(prompt, /Project Helios/);
+  assert.match(prompt, /Why are you interested/);
+  assert.match(prompt, /Writing style samples/);
 });
 
 test('requires an OpenAI API key for real AI generation', async () => {
@@ -308,6 +334,71 @@ test('can generate an AI fit score through a CLIProxyAPI Anthropic endpoint', as
   assert.equal(result.recommendation, 'apply');
 });
 
+test('can generate screening answers through an OpenAI-compatible endpoint', async () => {
+  const calls = [];
+  const result = await generateScreeningAnswersViaOpenAIResponses({
+    profile,
+    job,
+    questions: ['Why this role?'],
+    apiKey: 'local-proxy-key',
+    model: 'gpt-5.2',
+    baseUrl: 'http://127.0.0.1:8317/api/provider/openai/v1',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            output_text: JSON.stringify({
+              answers: [{ question: 'Why this role?', answer: 'I can connect support, MDM, and automation work.' }],
+            }),
+          };
+        },
+      };
+    },
+  });
+
+  assert.equal(calls[0].url, 'http://127.0.0.1:8317/api/provider/openai/v1/responses');
+  assert.equal(JSON.parse(calls[0].options.body).text.format.name, 'screening_answers');
+  assert.deepEqual(result, [{ question: 'Why this role?', answer: 'I can connect support, MDM, and automation work.' }]);
+});
+
+test('can generate screening answers through a CLIProxyAPI Anthropic endpoint', async () => {
+  const calls = [];
+  const result = await generateScreeningAnswers({
+    profile,
+    job,
+    provider: 'anthropic',
+    questions: ['Do you have ServiceNow experience?'],
+    apiKey: 'local-proxy-key',
+    model: 'SubscriptionGateway/claude-haiku-4-5-20251001',
+    baseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(['Yes. I have hands-on ServiceNow workflow and support automation experience.']),
+            }],
+          };
+        },
+      };
+    },
+  });
+
+  assert.equal(calls[0].url, 'http://127.0.0.1:8317/api/provider/anthropic/v1/messages');
+  assert.equal(JSON.parse(calls[0].options.body).max_tokens, 4000);
+  assert.deepEqual(result, [{
+    question: 'Do you have ServiceNow experience?',
+    answer: 'Yes. I have hands-on ServiceNow workflow and support automation experience.',
+  }]);
+});
+
 test('resolves CLIProxyAI runtime configuration from environment-style values', () => {
   const config = resolveAiRuntimeConfig({
     AI_PROVIDER: 'anthropic',
@@ -355,6 +446,14 @@ test('validateGeneratedPackage accepts array-shaped required/missing fields', ()
   });
   assert.deepEqual(result.requiredFields, { full_name: 'Ioan' });
   assert.deepEqual(result.missingFields, { salary: 'confirm' });
+});
+
+test('validateGeneratedAnswers accepts object and array-shaped model output', () => {
+  assert.deepEqual(validateGeneratedAnswers({
+    answers: [{ question: 'Q1', answer: 'A1' }],
+  }), [{ question: 'Q1', answer: 'A1' }]);
+  assert.deepEqual(validateGeneratedAnswers(['A2'], ['Q2']), [{ question: 'Q2', answer: 'A2' }]);
+  assert.throws(() => validateGeneratedAnswers({ nope: [] }), /answers array/);
 });
 
 test('normalizes generated AI fit score JSON', () => {

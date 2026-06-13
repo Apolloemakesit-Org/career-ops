@@ -21,6 +21,9 @@ export function defaultLocalConfig() {
     aiFitLimit: process.env.AI_FIT_LIMIT || '40',
     aiDraftMinFit: process.env.AI_DRAFT_MIN_FIT || '60',
     aiDraftLimit: process.env.AI_DRAFT_LIMIT || '20',
+    portalDiscoveryPortalConcurrency: process.env.PORTAL_DISCOVERY_PORTAL_CONCURRENCY || '4',
+    portalDiscoveryDetailConcurrency: process.env.PORTAL_DISCOVERY_DETAIL_CONCURRENCY || '3',
+    autoFitAfterDiscovery: process.env.AUTO_FIT_AFTER_DISCOVERY ?? '1',
     cliProxyUrl: process.env.CLI_PROXY_URL || 'http://127.0.0.1:8317',
     cliProxyManagementKey: process.env.CLI_PROXY_MANAGEMENT_KEY || '',
   };
@@ -63,6 +66,9 @@ export function envFromLocalConfig(config = loadLocalConfig()) {
     AI_FIT_LIMIT: String(config.aiFitLimit || '40'),
     AI_DRAFT_MIN_FIT: String(config.aiDraftMinFit || '60'),
     AI_DRAFT_LIMIT: String(config.aiDraftLimit || '20'),
+    PORTAL_DISCOVERY_PORTAL_CONCURRENCY: String(config.portalDiscoveryPortalConcurrency || '4'),
+    PORTAL_DISCOVERY_DETAIL_CONCURRENCY: String(config.portalDiscoveryDetailConcurrency || '3'),
+    AUTO_FIT_AFTER_DISCOVERY: String(config.autoFitAfterDiscovery ?? '1'),
   };
 }
 

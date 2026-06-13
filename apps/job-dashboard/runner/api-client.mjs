@@ -47,6 +47,18 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
       });
     },
 
+    async updateJob(jobId, updates) {
+      return request(`${root}/api/jobs/${jobId}`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'PATCH',
+          body: JSON.stringify(updates),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
     async updateJobFit(jobId, fit) {
       return request(`${root}/api/jobs/${jobId}/fit`, {
         token,
@@ -66,6 +78,22 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
         options: {
           method: 'POST',
           body: JSON.stringify(payload),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
+    async fetchAnswers(jobId) {
+      return request(`${root}/api/jobs/${jobId}/answers`, { token, fetchImpl });
+    },
+
+    async generateAnswers(jobId, questions, source = 'runner') {
+      return request(`${root}/api/jobs/${jobId}/answers/generate`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'POST',
+          body: JSON.stringify({ questions, source }),
           headers: { 'content-type': 'application/json' },
         },
       });
@@ -128,6 +156,7 @@ function queryString(filters = {}) {
     const value = statuses.map(item => String(item || '').trim()).filter(Boolean).join(',');
     if (value) params.set('status', value);
   }
+  if (filters.createdSince) params.set('createdSince', String(filters.createdSince));
   const text = params.toString();
   return text ? `?${text}` : '';
 }

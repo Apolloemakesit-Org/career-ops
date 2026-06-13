@@ -2,6 +2,17 @@ export function createPortalCounters(portals = []) {
   return Object.fromEntries(portals.map(portal => [String(portal || '').toLowerCase(), 0]));
 }
 
+export function groupPlanByPortal(plan = []) {
+  const groups = new Map();
+  for (const item of plan) {
+    const portal = String(item?.portal || '').trim().toLowerCase();
+    if (!portal) continue;
+    if (!groups.has(portal)) groups.set(portal, []);
+    groups.get(portal).push({ ...item, portal });
+  }
+  return [...groups.entries()].map(([portal, items]) => ({ portal, items }));
+}
+
 export function canImportForPortal({ portal, importedTotal = 0, counters = {}, budgets = {} } = {}) {
   const name = String(portal || '').toLowerCase();
   if (!name) return false;

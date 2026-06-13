@@ -17,6 +17,7 @@ function createStore() {
     events: [],
     runnerState: {},
     runnerCommands: [],
+    screeningAnswers: [],
     healthCalls: 0,
   };
 
@@ -156,6 +157,30 @@ function createStore() {
     async listEvents(filters = {}) {
       state.lastEventFilters = filters;
       return state.events;
+    },
+    async listScreeningAnswers(jobId) {
+      return state.screeningAnswers.filter(item => item.jobId === jobId);
+    },
+    async createScreeningAnswers(jobId, items) {
+      const created = items.map((item, index) => ({
+        id: `answer-${state.screeningAnswers.length + index + 1}`,
+        jobId,
+        status: 'draft',
+        ...item,
+      }));
+      state.screeningAnswers.push(...created);
+      return created;
+    },
+    async updateScreeningAnswer(id, updates) {
+      const answer = state.screeningAnswers.find(item => item.id === id);
+      if (!answer) return null;
+      Object.assign(answer, updates);
+      return answer;
+    },
+    async deleteScreeningAnswer(id) {
+      const before = state.screeningAnswers.length;
+      state.screeningAnswers = state.screeningAnswers.filter(item => item.id !== id);
+      return { deleted: before - state.screeningAnswers.length };
     },
     async rescoreCvMatches() { return { updated: state.jobs.length }; },
   };
@@ -725,6 +750,67 @@ test('returns a setup error when AI generation is not configured', async () => {
   assert.equal(response.body.error, 'ai_not_configured');
 });
 
+test('generates and manages screening answers for a job', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: { title: 'Application Support Engineer', company: 'ExampleSoft' },
+  }, store);
+
+  const generated = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/answers/generate',
+    body: { questions: ['Why this role?'], source: 'runner' },
+  }, store, {
+    generateScreeningAnswers: async ({ questions }) => questions.map(question => ({
+      question,
+      answer: 'I can combine support, MDM, and automation here.',
+    })),
+  });
+  const listed = await dispatchApi({ method: 'GET', url: '/api/jobs/job-1/answers' }, store);
+  const patched = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/answers/answer-1',
+    body: { answer: 'Edited.', status: 'edited' },
+  }, store);
+  const deleted = await dispatchApi({ method: 'DELETE', url: '/api/answers/answer-1' }, store);
+
+  assert.equal(generated.status, 201);
+  assert.equal(generated.body[0].source, 'runner');
+  assert.equal(listed.body.length, 1);
+  assert.equal(patched.body.answer, 'Edited.');
+  assert.equal(deleted.body.deleted, 1);
+});
+
+test('screening answer generation validates inputs and propagates AI setup errors', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: { title: 'Application Support Engineer', company: 'ExampleSoft' },
+  }, store);
+  const empty = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/answers/generate',
+    body: { questions: [] },
+  }, store);
+  const error = new Error('AI missing');
+  error.code = 'ai_not_configured';
+  const failed = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/answers/generate',
+    body: { questions: ['Why?'] },
+  }, store, {
+    generateScreeningAnswers: async () => { throw error; },
+  });
+
+  assert.equal(empty.status, 400);
+  assert.equal(empty.body.error, 'questions_required');
+  assert.equal(failed.status, 424);
+  assert.equal(failed.body.error, 'ai_not_configured');
+});
+
 test('queues runner commands from the hosted dashboard', async () => {
   const store = createStore();
 
@@ -776,6 +862,96 @@ test('stores desired local runner config from the dashboard', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.body.desiredConfig.aiModel, 'claude-haiku-4-5');
+});
+
+test('returns dashboard runner supervisor status', async () => {
+  const response = await dispatchApi({
+    method: 'GET',
+    url: '/api/runner/supervisor',
+  }, createStore(), {
+    supervisor: {
+      status: () => ({ mode: 'spawned', pid: 123 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { mode: 'spawned', pid: 123 });
+});
+
+test('dashboard settings persist local runner config without leaking secrets', async () => {
+  const store = createStore();
+  let config = {
+    aiProvider: 'anthropic',
+    aiModel: 'old-model',
+    aiBaseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+    aiProxyApiKey: 'existing-key',
+  };
+  let reloads = 0;
+  const pushed = [];
+
+  const response = await dispatchApi({
+    method: 'PUT',
+    url: '/api/settings/runner',
+    body: {
+      aiProvider: 'anthropic',
+      aiModel: 'claude-haiku-4-5',
+      aiBaseUrl: 'https://api.clawopen.top/v1',
+      aiProxyApiKey: 'configured',
+    },
+  }, store, {
+    runnerSettings: {
+      isLocal: true,
+      load: () => config,
+      save: value => {
+        config = value;
+        return config;
+      },
+      redact: value => ({ ...value, aiProxyApiKey: value.aiProxyApiKey ? 'configured' : '' }),
+    },
+    reloadServices: () => {
+      reloads += 1;
+    },
+    fetchImpl: async (url, options) => {
+      pushed.push({ url, body: JSON.parse(options.body) });
+      throw new Error('runner offline');
+    },
+  });
+  const redacted = await dispatchApi({
+    method: 'GET',
+    url: '/api/settings/runner',
+  }, store, {
+    runnerSettings: {
+      isLocal: true,
+      load: () => config,
+      redact: value => ({ ...value, aiProxyApiKey: value.aiProxyApiKey ? 'configured' : '' }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.runnerPushed, false);
+  assert.equal(config.aiBaseUrl, 'https://api.clawopen.top/v1');
+  assert.equal(config.aiProxyApiKey, 'existing-key');
+  assert.equal(response.body.config.aiProxyApiKey, 'configured');
+  assert.equal(redacted.body.aiProxyApiKey, 'configured');
+  assert.equal(reloads, 1);
+  assert.equal(pushed[0].url, 'http://127.0.0.1:48731/config');
+});
+
+test('dashboard settings store desired config in cloud mode', async () => {
+  const store = createStore();
+
+  const response = await dispatchApi({
+    method: 'PUT',
+    url: '/api/settings/runner',
+    body: { aiBaseUrl: 'https://api.clawopen.top/v1', aiProxyApiKey: 'cloud-key' },
+  }, store, {
+    runnerSettings: { isLocal: false },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.runnerPushed, false);
+  assert.equal(store.state.runnerState.desiredConfig.aiBaseUrl, 'https://api.clawopen.top/v1');
+  assert.equal(response.body.config.aiProxyApiKey, 'configured');
 });
 
 test('postgres runner command claims use row locking to avoid duplicate claims', async () => {

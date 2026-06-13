@@ -50,6 +50,41 @@ export async function fillKnownFields(page, fields, missingFields = {}, options 
   return missingFields;
 }
 
+export async function detectScreeningQuestions(page) {
+  const items = await page.locator('textarea, [contenteditable="true"], [contenteditable=""]').evaluateAll(elements => {
+    function visible(element) {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    }
+    function labelFor(element) {
+      const id = element.getAttribute('id') || '';
+      const explicit = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent : '';
+      const closestLabel = element.closest('label')?.textContent || '';
+      const heading = element.closest('section, article, div, fieldset, form')?.querySelector('h1,h2,h3,h4,legend,label,p')?.textContent || '';
+      return [
+        explicit,
+        element.getAttribute('aria-label') || '',
+        element.getAttribute('placeholder') || '',
+        closestLabel,
+        heading,
+      ].map(text => String(text || '').replace(/\s+/g, ' ').trim()).find(Boolean) || '';
+    }
+
+    return elements.map((element, index) => {
+      const text = element.tagName === 'TEXTAREA' ? element.value : element.textContent;
+      if (!visible(element) || String(text || '').trim()) return null;
+      const question = labelFor(element);
+      element.setAttribute('data-career-ops-screening-index', String(index));
+      return {
+        question,
+        selector: `[data-career-ops-screening-index="${index}"]`,
+      };
+    }).filter(Boolean);
+  });
+  return items.filter(item => looksLikeScreeningQuestion(item.question));
+}
+
 export async function tryFillField(page, label, value, fieldHints = {}) {
   const isFileField = label === 'cv' || label === 'resume' || label === 'cover_letter_pdf';
 
@@ -107,4 +142,23 @@ function cssEscape(value) {
 
 function unique(values) {
   return [...new Set(values.map(value => String(value).trim()).filter(Boolean))];
+}
+
+export function looksLikeScreeningQuestion(label) {
+  const text = String(label || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= 15 || isSubmitControl(text)) return false;
+  const normalized = normalizeLabel(text);
+  const knownField = Object.values(fieldAliases)
+    .flat()
+    .some(alias => normalizeLabel(alias) === normalized || normalized.includes(normalizeLabel(alias)));
+  if (knownField) return false;
+  return /\?$/.test(text) || /\b(why|how|describe|tell us|what|explain|motivat|de ce|cum|descrie|povest)\b/i.test(text);
+}
+
+export function normalizeQuestion(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+}
+
+function normalizeLabel(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }

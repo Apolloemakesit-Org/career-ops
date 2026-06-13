@@ -19,6 +19,10 @@ const host = process.env.LOCAL_RUNNER_HOST || '127.0.0.1';
 const port = Number(process.env.LOCAL_RUNNER_PORT || 48731);
 const manager = createRunnerManager({
   envProvider: () => envFromLocalConfig(loadLocalConfig()),
+  onRunExit: (name, code, run) => {
+    if (name !== 'discover' || code !== 0 || !autoFitEnabled(loadLocalConfig(), process.env)) return;
+    manager.start('score-ai', { since: run.startedAt });
+  },
 });
 const commandBindings = new Map();
 const handleControlRequest = createControlHandler({
@@ -122,4 +126,9 @@ async function syncWithDashboard() {
     redactConfig: redactLocalConfig,
     commandBindings,
   });
+}
+
+function autoFitEnabled(config = {}, env = process.env) {
+  const value = env.AUTO_FIT_AFTER_DISCOVERY ?? config.autoFitAfterDiscovery ?? '1';
+  return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }

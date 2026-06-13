@@ -16,6 +16,7 @@ export function createRunnerManager({
   envProvider = () => ({}),
   now = () => new Date(),
   maxLogs = 400,
+  onRunExit = () => {},
 } = {}) {
   const runs = new Map(Object.keys(commands).map(name => [name, createRunState(name)]));
 
@@ -64,6 +65,9 @@ export function createRunnerManager({
       run.exitCode = code;
       run.finishedAt = now().toISOString();
       run.logs.push(logEntry('system', `${name} runner exited with code ${code}`, now));
+      Promise.resolve(onRunExit(name, code, publicRun(run))).catch(error => {
+        run.logs.push(logEntry('system', `exit hook failed: ${error.message}`, now));
+      });
     });
 
     return run;
@@ -115,8 +119,11 @@ function createRunState(name) {
 }
 
 function envOverridesFor(name, options = {}) {
-  if (name !== 'discover') return {};
   const normalized = normalizeStartOptions(options);
+  if (name === 'score-ai') {
+    return normalized.since ? { AI_FIT_SINCE: normalized.since } : {};
+  }
+  if (name !== 'discover') return {};
   const env = {
     PORTAL_DISCOVERY_PORTALS: normalized.portal,
     PORTAL_DISCOVERY_MODE: normalized.mode,
@@ -130,6 +137,7 @@ function normalizeStartOptions(options = {}) {
   return {
     portal: String(options.portal || '').trim().toLowerCase(),
     mode: String(options.mode || '').trim().toLowerCase(),
+    since: String(options.since || '').trim(),
   };
 }
 

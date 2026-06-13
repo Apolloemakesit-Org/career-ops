@@ -61,7 +61,14 @@
           <label>Min salary<input id="filterMinSalary" type="number" min="0"></label>
           <label>Max salary<input id="filterMaxSalary" type="number" min="0"></label>
           <label>Currency<select id="filterCurrency"><option value="">Any</option><option value="EUR">EUR</option><option value="RON">RON</option><option value="USD">USD</option></select></label>
-          <label>Posted<select id="filterPostedWithin"><option value="">Any</option><option value="1">1d</option><option value="3">3d</option><option value="7">7d</option><option value="30">30d</option></select></label>
+          <div class="quick-filter-group" aria-label="Posted within">
+            <span>Posted</span>
+            <input id="filterPostedWithin" type="hidden">
+            <button type="button" class="quick-filter-chip" data-posted-days="1">Today</button>
+            <button type="button" class="quick-filter-chip" data-posted-days="7">7d</button>
+            <button type="button" class="quick-filter-chip" data-posted-days="30">30d</button>
+            <button type="button" class="quick-filter-chip" data-posted-days="">All</button>
+          </div>
           <label>Min CV match<input id="filterMinMatch" type="range" min="0" max="100" value="0"></label>
           <label class="wide">Search<input id="filterSearch" placeholder="Title or description" type="search" autocomplete="off" name="careerOpsJobSearch"></label>
           <button id="clearFiltersButton" type="button" class="secondary-button">Clear filters</button>
@@ -121,6 +128,9 @@
               <label>AI score limit<input id="runnerAiFitLimit" type="number" min="1" max="200"></label>
               <label>Minimum fit %<input id="runnerAiDraftMinFit" type="number" min="0" max="100"></label>
               <label>Draft limit<input id="runnerAiDraftLimit" type="number" min="1" max="100"></label>
+              <label>Portal workers<input id="runnerPortalConcurrency" type="number" min="1" max="20"></label>
+              <label>Detail tabs<input id="runnerDetailConcurrency" type="number" min="1" max="5"></label>
+              <label class="checkbox-field"><input id="runnerAutoFitAfterDiscovery" type="checkbox"> Auto-score new jobs after discovery</label>
             </div>
             <div class="button-row ai-actions">
               <button id="saveRunnerConfigButton" class="primary-button">Save Local Runner Config</button>

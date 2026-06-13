@@ -21,6 +21,7 @@ const state = {
   runnerStatus: {},
   runnerConfig: {},
   runnerCommands: [],
+  runnerSupervisor: {},
   aiModels: [],
   aiGateway: {},
   accounts: [],
@@ -82,6 +83,9 @@ document.querySelectorAll('[data-runner-action]').forEach(button => {
   const element = document.getElementById(id);
   element.addEventListener('input', applyFilters);
   element.addEventListener('change', applyFilters);
+});
+document.querySelectorAll('[data-posted-days]').forEach(button => {
+  button.addEventListener('click', () => setPostedWithinFilter(button.dataset.postedDays || ''));
 });
 document.getElementById('saveCvButton').addEventListener('click', saveCv);
 document.getElementById('rescoreCvButton').addEventListener('click', rescoreCv);
@@ -277,6 +281,7 @@ function renderJobs() {
       <div class="score ${scoreClass(job.cvMatchScore)}">${job.cvMatchScore || 0}%</div>
       <div class="score ${scoreClass(job.fitScore)}">${job.fitScore ? `${job.fitScore}%` : '-'}</div>
       <div>
+        ${isNewJob(job) ? '<span class="new-job-badge">NEW</span>' : ''}
         ${job.url ? `<a class="job-title-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">${escapeHtml(job.title || '')}</a>` : escapeHtml(job.title || '')}
         <br><span class="portal-chip">${escapeHtml(portalLabel(job.portal || ''))}</span> <span class="muted">${escapeHtml(job.location || '')}</span>
       </div>
@@ -589,7 +594,10 @@ function renderCv() {
 }
 
 async function showJobDetails(jobId) {
-  const job = await api(`/api/jobs/${jobId}/detail`).catch(() => state.jobs.find(item => item.id === jobId));
+  const [job, answers] = await Promise.all([
+    api(`/api/jobs/${jobId}/detail`).catch(() => state.jobs.find(item => item.id === jobId)),
+    api(`/api/jobs/${jobId}/answers`).catch(() => []),
+  ]);
   if (!job) return;
   const cvBreakdown = job.cvMatchBreakdown || {};
   document.getElementById('jobDetailsTitle').textContent = job.title || 'Job details';
@@ -639,6 +647,7 @@ async function showJobDetails(jobId) {
         ${renderAiFitData(job)}
       </article>
     </section>
+    ${renderScreeningAnswersPanel(job, answers)}
     <section>
       <details open><summary>Description</summary><div class="markdown-preview">${markdown(job.description || 'No description captured yet.')}</div></details>
       <details><summary>Requirements</summary><div class="markdown-preview">${markdown(job.requirementsText || 'No requirements section captured yet.')}</div></details>
@@ -650,6 +659,7 @@ async function showJobDetails(jobId) {
   });
   bindJobEditButtons();
   bindDetailPackageButtons();
+  bindScreeningAnswerButtons(job.id);
   const dialog = document.getElementById('jobDetailsDialog');
   if (!dialog.open) dialog.showModal();
 }
@@ -805,6 +815,105 @@ async function generatePackage(jobId, button) {
   }
 }
 
+function renderScreeningAnswersPanel(job, answers = []) {
+  return `
+    <section class="screening-panel" data-screening-panel="${escapeHtml(job.id)}">
+      <div class="item-head">
+        <h3>Screening Answers</h3>
+        <button class="primary-button" data-generate-answers="${escapeHtml(job.id)}" type="button">Generate</button>
+      </div>
+      <label>Questions<textarea data-screening-questions>${escapeHtml((answers.pendingQuestions || []).join('\n'))}</textarea></label>
+      <div class="screening-answer-list">
+        ${answers.map(renderScreeningAnswerCard).join('') || '<p class="muted">No answers drafted yet.</p>'}
+      </div>
+      <div class="field-errors" data-screening-error></div>
+    </section>
+  `;
+}
+
+function renderScreeningAnswerCard(answer) {
+  return `
+    <article class="screening-answer-card" data-screening-answer="${escapeHtml(answer.id)}">
+      <div class="item-head">
+        <strong>${escapeHtml(answer.question || '')}</strong>
+        ${badge(answer.status || 'draft')}
+      </div>
+      <textarea data-screening-answer-text>${escapeHtml(answer.answer || '')}</textarea>
+      <div class="button-row">
+        <button class="secondary-button" data-copy-answer="${escapeHtml(answer.id)}" type="button">Copy</button>
+        <button class="secondary-button" data-save-answer="${escapeHtml(answer.id)}" type="button">Save</button>
+        <button class="secondary-button danger" data-delete-answer="${escapeHtml(answer.id)}" type="button">Delete</button>
+      </div>
+    </article>
+  `;
+}
+
+function bindScreeningAnswerButtons(jobId) {
+  document.querySelectorAll('[data-generate-answers]').forEach(button => {
+    button.addEventListener('click', () => generateScreeningAnswers(jobId, button));
+  });
+  document.querySelectorAll('[data-copy-answer]').forEach(button => {
+    button.addEventListener('click', () => copyScreeningAnswer(button.dataset.copyAnswer, button));
+  });
+  document.querySelectorAll('[data-save-answer]').forEach(button => {
+    button.addEventListener('click', () => saveScreeningAnswer(button.dataset.saveAnswer, button, jobId));
+  });
+  document.querySelectorAll('[data-delete-answer]').forEach(button => {
+    button.addEventListener('click', () => deleteScreeningAnswer(button.dataset.deleteAnswer, button, jobId));
+  });
+}
+
+async function generateScreeningAnswers(jobId, button) {
+  const panel = document.querySelector(`[data-screening-panel="${CSS.escape(String(jobId))}"]`);
+  const questions = (panel?.querySelector('[data-screening-questions]')?.value || '')
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean);
+  const errorTarget = panel?.querySelector('[data-screening-error]');
+  if (errorTarget) errorTarget.textContent = '';
+  await withButtonLoading(button, 'Generating...', async () => {
+    try {
+      await withRetry(() => api(`/api/jobs/${jobId}/answers/generate`, {
+        method: 'POST',
+        body: { questions, source: 'panel' },
+      }));
+      await showJobDetails(jobId);
+      showToast('Answers generated.', 'success');
+    } catch (error) {
+      if (errorTarget) errorTarget.innerHTML = `<p class="error-text">${escapeHtml(error.message || 'Could not generate answers.')}</p>`;
+      throw error;
+    }
+  });
+}
+
+async function copyScreeningAnswer(answerId, button) {
+  const card = document.querySelector(`[data-screening-answer="${CSS.escape(String(answerId))}"]`);
+  const text = card?.querySelector('[data-screening-answer-text]')?.value || '';
+  if (!text) return;
+  await withButtonLoading(button, 'Copying...', async () => {
+    await copyText(text);
+    showToast('Answer copied.', 'success');
+  });
+}
+
+async function saveScreeningAnswer(answerId, button, jobId) {
+  const card = document.querySelector(`[data-screening-answer="${CSS.escape(String(answerId))}"]`);
+  const answer = card?.querySelector('[data-screening-answer-text]')?.value || '';
+  await withButtonLoading(button, 'Saving...', async () => {
+    await api(`/api/answers/${answerId}`, { method: 'PATCH', body: { answer, status: 'edited' } });
+    await showJobDetails(jobId);
+    showToast('Answer saved.', 'success');
+  });
+}
+
+async function deleteScreeningAnswer(answerId, button, jobId) {
+  await withButtonLoading(button, 'Deleting...', async () => {
+    await api(`/api/answers/${answerId}`, { method: 'DELETE' });
+    await showJobDetails(jobId);
+    showToast('Answer deleted.', 'success');
+  });
+}
+
 async function scoreWithAi(jobId, button) {
   const ok = await confirmAction({
     title: 'AI Score Job',
@@ -908,6 +1017,8 @@ async function savePortal(portal, button) {
 }
 
 async function loadRunnerStatus({ alertOnError = false } = {}) {
+  const supervisor = await api('/api/runner/supervisor').catch(() => null);
+  state.runnerSupervisor = supervisor;
   try {
     const [health, status, config, aiModels] = await Promise.all([
       localRunner('/health'),
@@ -919,14 +1030,19 @@ async function loadRunnerStatus({ alertOnError = false } = {}) {
     state.runnerConfig = config;
     state.aiModels = aiModels.models || [];
     state.aiGateway = aiModels.gateway || {};
-    document.getElementById('localRunnerStatus').textContent = `${health.service} connected`;
+    renderLocalRunnerStatus(`${health.service} connected`);
     renderRunnerConfig(config);
     renderRunnerStatus(status);
     await loadRunnerLogs();
   } catch (error) {
+    const settings = await api('/api/settings/runner').catch(() => null);
+    if (settings) {
+      state.runnerConfig = settings.config || settings;
+      renderRunnerConfig(state.runnerConfig);
+    }
     const cloudState = await loadCloudRunnerState().catch(() => null);
     if (!cloudState) {
-      document.getElementById('localRunnerStatus').textContent = 'Local runner offline';
+      renderLocalRunnerStatus('Local runner offline');
       renderRunnerStatus({});
       if (alertOnError) showToast('Local runner is not reachable yet. Start it with npm run runner:control --prefix apps/job-dashboard', 'error');
     }
@@ -972,11 +1088,26 @@ async function loadCloudRunnerState() {
   state.aiModels = runnerState.aiModels || [];
   state.aiGateway = runnerState.aiGateway || {};
   const updated = runnerState.updatedAt ? `Synced ${new Date(runnerState.updatedAt).toLocaleTimeString()}` : 'Waiting for local sync';
-  document.getElementById('localRunnerStatus').textContent = updated;
+  renderLocalRunnerStatus(updated);
   renderRunnerConfig(state.runnerConfig);
   renderRunnerStatus(state.runnerStatus);
   renderCloudRunnerLogs();
   return runnerState;
+}
+
+function renderLocalRunnerStatus(prefix) {
+  const supervisor = state.runnerSupervisor || {};
+  const suffix = supervisorStatusText(supervisor);
+  document.getElementById('localRunnerStatus').textContent = suffix ? `${prefix} - ${suffix}` : prefix;
+}
+
+function supervisorStatusText(supervisor = {}) {
+  if (supervisor.mode === 'spawned') return `spawned by dashboard${supervisor.pid ? ` (pid ${supervisor.pid})` : ''}`;
+  if (supervisor.mode === 'external') return 'external runner';
+  if (supervisor.mode === 'disabled') return 'auto-start disabled';
+  if (supervisor.mode === 'restarting') return `restarting (${supervisor.restarts || 0}/${supervisor.maxRestarts || 0})`;
+  if (supervisor.mode === 'failed') return `failed after ${supervisor.restarts || 0} restarts`;
+  return '';
 }
 
 function renderCloudRunnerLogs(runner = 'discover') {
@@ -989,14 +1120,19 @@ function renderCloudRunnerLogs(runner = 'discover') {
 
 function renderRunnerConfig(config = {}) {
   setValue('runnerDashboardUrl', config.dashboardUrl || window.location.origin);
-  setValue('runnerDashboardToken', config.dashboardToken || token || '');
+  setValue('runnerDashboardToken', config.dashboardToken === 'configured' ? '' : (config.dashboardToken || token || ''));
+  document.getElementById('runnerDashboardToken').placeholder = config.dashboardToken === 'configured' ? 'configured' : '';
   setValue('runnerAiProvider', config.aiProvider || 'openai');
   renderAiModelOptions(config);
   setValue('runnerAiBaseUrl', config.aiBaseUrl || 'http://127.0.0.1:8317/api/provider/openai/v1');
-  setValue('runnerAiProxyApiKey', config.aiProxyApiKey || '');
+  setValue('runnerAiProxyApiKey', config.aiProxyApiKey === 'configured' ? '' : (config.aiProxyApiKey || ''));
+  document.getElementById('runnerAiProxyApiKey').placeholder = config.aiProxyApiKey === 'configured' ? 'configured' : '';
   setValue('runnerAiFitLimit', config.aiFitLimit || '40');
   setValue('runnerAiDraftMinFit', config.aiDraftMinFit || '60');
   setValue('runnerAiDraftLimit', config.aiDraftLimit || '20');
+  setValue('runnerPortalConcurrency', config.portalDiscoveryPortalConcurrency || '4');
+  setValue('runnerDetailConcurrency', config.portalDiscoveryDetailConcurrency || '3');
+  document.getElementById('runnerAutoFitAfterDiscovery').checked = autoFitConfigEnabled(config.autoFitAfterDiscovery);
 }
 
 function renderRunnerStatus(status = {}) {
@@ -1062,20 +1198,22 @@ async function saveRunnerConfig() {
     dashboardToken: value('runnerDashboardToken') || token || '',
     aiProvider: selected?.provider || value('runnerAiProvider'),
     aiModel: selected?.gatewayModel || '',
-    aiBaseUrl: selected?.baseUrl || value('runnerAiBaseUrl'),
+    aiBaseUrl: value('runnerAiBaseUrl') || selected?.baseUrl || '',
     aiProxyApiKey: value('runnerAiProxyApiKey'),
     aiFitLimit: value('runnerAiFitLimit') || '40',
     aiDraftMinFit: value('runnerAiDraftMinFit') || '60',
     aiDraftLimit: value('runnerAiDraftLimit') || '20',
+    portalDiscoveryPortalConcurrency: value('runnerPortalConcurrency') || '4',
+    portalDiscoveryDetailConcurrency: value('runnerDetailConcurrency') || '3',
+    autoFitAfterDiscovery: document.getElementById('runnerAutoFitAfterDiscovery').checked ? '1' : '0',
   };
   await withButtonLoading(document.getElementById('saveRunnerConfigButton'), 'Saving...', async () => {
-    try {
-      await localRunner('/config', { method: 'PUT', body: config });
-    } catch {
-      await api('/api/runner/config', { method: 'PUT', body: config });
-    }
+    const saved = await api('/api/settings/runner', { method: 'PUT', body: config });
+    state.runnerConfig = saved.config || saved;
     await loadRunnerStatus({ alertOnError: true });
-    showToast('Local runner config saved.', 'success');
+    showToast(saved.runnerPushed === false
+      ? 'Local runner config saved. Runner offline; it will sync on start.'
+      : 'Local runner config saved.', 'success');
   });
 }
 
@@ -1692,6 +1830,8 @@ function updateLocationQuery() {
   setParam(params, 'maxSalary', value('filterMaxSalary'));
   setParam(params, 'currency', value('filterCurrency'));
   setParam(params, 'postedWithinDays', value('filterPostedWithin'));
+  localStorage.setItem('careerOpsPostedWithin', value('filterPostedWithin'));
+  syncPostedWithinChips();
   setParam(params, 'minMatch', value('filterMinMatch') === '0' ? '' : value('filterMinMatch'));
   setParam(params, 'sort', sortColumnForKey(state.sort.key));
   setParam(params, 'dir', state.sort.direction);
@@ -1717,7 +1857,10 @@ function hydrateFiltersFromLocation() {
   setValue('filterMinSalary', params.get('minSalary') || '');
   setValue('filterMaxSalary', params.get('maxSalary') || '');
   setValue('filterCurrency', params.get('currency') || '');
-  setValue('filterPostedWithin', params.get('postedWithinDays') || '');
+  setValue('filterPostedWithin', params.has('postedWithinDays')
+    ? params.get('postedWithinDays')
+    : localStorage.getItem('careerOpsPostedWithin') ?? '7');
+  syncPostedWithinChips();
   setValue('filterMinMatch', params.get('minMatch') || '0');
   state.sort = {
     key: sortKeyForColumn(params.get('sort') || state.sort.key),
@@ -1729,7 +1872,7 @@ function hydrateFiltersFromLocation() {
   const cleanQ = sanitizeSearchQuery(rawQ);
   setValue('filterSearch', cleanQ);
   state.jobPage = Math.max(1, Number(params.get('page')) || 1);
-  if (cleanQ !== rawQ) updateLocationQuery();
+  if (cleanQ !== rawQ || (!params.has('postedWithinDays') && value('filterPostedWithin'))) updateLocationQuery();
 }
 
 function clearFilters() {
@@ -1739,11 +1882,25 @@ function clearFilters() {
   setValue('filterMinSalary', '');
   setValue('filterMaxSalary', '');
   setValue('filterCurrency', '');
-  setValue('filterPostedWithin', '');
+  setPostedWithinFilter('', { apply: false });
   setValue('filterMinMatch', '0');
   setValue('filterSearch', '');
   state.jobPage = 1;
   applyFilters();
+}
+
+async function setPostedWithinFilter(days, { apply = true } = {}) {
+  setValue('filterPostedWithin', days);
+  localStorage.setItem('careerOpsPostedWithin', days);
+  syncPostedWithinChips();
+  if (apply) await applyFilters();
+}
+
+function syncPostedWithinChips() {
+  const selected = value('filterPostedWithin');
+  document.querySelectorAll('[data-posted-days]').forEach(button => {
+    button.classList.toggle('active', (button.dataset.postedDays || '') === selected);
+  });
 }
 
 function selectedValues(id) {
@@ -1814,6 +1971,12 @@ function formatRelative(value) {
   return formatter.format(days, 'day');
 }
 
+function isNewJob(job = {}) {
+  const timestamp = Date.parse(job.createdAt || job.created_at || '');
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp < 24 * 60 * 60 * 1000;
+}
+
 function badge(value) {
   const clean = String(value || 'unknown');
   return `<span class="badge badge-${escapeHtml(clean)}">${escapeHtml(clean)}</span>`;
@@ -1847,6 +2010,10 @@ function value(id) {
 
 function setValue(id, current) {
   document.getElementById(id).value = Array.isArray(current) ? current.join('\n') : (current || '');
+}
+
+function autoFitConfigEnabled(value) {
+  return !['0', 'false', 'no', 'off'].includes(String(value ?? '1').trim().toLowerCase());
 }
 
 function lines(id) {

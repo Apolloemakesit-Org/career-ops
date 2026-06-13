@@ -41,8 +41,7 @@ async function main() {
       
       if (result.result === 'expired') {
         console.log(`  ❌ Expired: ${result.reason}`);
-        await client.createJob({
-          ...job,
+        await client.updateJob(job.id, {
           status: 'discarded',
           notes: `${job.notes || ''}\n[Liveness] Marked discarded: ${result.reason} (${new Date().toISOString()})`.trim()
         });

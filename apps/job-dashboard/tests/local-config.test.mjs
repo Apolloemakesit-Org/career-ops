@@ -9,16 +9,31 @@ import { defaultLocalConfig, loadLocalConfig, redactLocalConfig } from '../runne
 test('defaults to the local dashboard instead of the hosted Railway dashboard', () => {
   const previousUrl = process.env.DASHBOARD_URL;
   const previousToken = process.env.DASHBOARD_TOKEN;
+  const previousPortalConcurrency = process.env.PORTAL_DISCOVERY_PORTAL_CONCURRENCY;
+  const previousDetailConcurrency = process.env.PORTAL_DISCOVERY_DETAIL_CONCURRENCY;
+  const previousAutoFit = process.env.AUTO_FIT_AFTER_DISCOVERY;
   delete process.env.DASHBOARD_URL;
   delete process.env.DASHBOARD_TOKEN;
+  delete process.env.PORTAL_DISCOVERY_PORTAL_CONCURRENCY;
+  delete process.env.PORTAL_DISCOVERY_DETAIL_CONCURRENCY;
+  delete process.env.AUTO_FIT_AFTER_DISCOVERY;
   try {
     assert.equal(defaultLocalConfig().dashboardUrl, 'http://127.0.0.1:3000');
     assert.equal(defaultLocalConfig().dashboardToken, '');
+    assert.equal(defaultLocalConfig().portalDiscoveryPortalConcurrency, '4');
+    assert.equal(defaultLocalConfig().portalDiscoveryDetailConcurrency, '3');
+    assert.equal(defaultLocalConfig().autoFitAfterDiscovery, '1');
   } finally {
     if (previousUrl === undefined) delete process.env.DASHBOARD_URL;
     else process.env.DASHBOARD_URL = previousUrl;
     if (previousToken === undefined) delete process.env.DASHBOARD_TOKEN;
     else process.env.DASHBOARD_TOKEN = previousToken;
+    if (previousPortalConcurrency === undefined) delete process.env.PORTAL_DISCOVERY_PORTAL_CONCURRENCY;
+    else process.env.PORTAL_DISCOVERY_PORTAL_CONCURRENCY = previousPortalConcurrency;
+    if (previousDetailConcurrency === undefined) delete process.env.PORTAL_DISCOVERY_DETAIL_CONCURRENCY;
+    else process.env.PORTAL_DISCOVERY_DETAIL_CONCURRENCY = previousDetailConcurrency;
+    if (previousAutoFit === undefined) delete process.env.AUTO_FIT_AFTER_DISCOVERY;
+    else process.env.AUTO_FIT_AFTER_DISCOVERY = previousAutoFit;
   }
 });
 

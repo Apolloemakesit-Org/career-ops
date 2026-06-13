@@ -69,6 +69,24 @@ test('job filters include application status in the UI and query state', async (
   assert.match(source, /setValue\('status-filter', params\.get\('status'\) \|\| ''\)/);
 });
 
+test('job freshness filter defaults to 7 days and uses quick chips', async () => {
+  const [source, html, css] = await Promise.all([
+    readFile(appSource, 'utf8'),
+    readFile(indexSource, 'utf8'),
+    readFile(stylesSource, 'utf8'),
+  ]);
+
+  for (const days of ['1', '7', '30']) {
+    assert.match(html, new RegExp(`data-posted-days="${days}"`));
+  }
+  assert.match(html, /data-posted-days="">All<\/button>/);
+  assert.match(source, /localStorage\.getItem\('careerOpsPostedWithin'\) \?\? '7'/);
+  assert.match(source, /function syncPostedWithinChips\(\)/);
+  assert.match(source, /localStorage\.setItem\('careerOpsPostedWithin', days\)/);
+  assert.match(source, /!params\.has\('postedWithinDays'\) && value\('filterPostedWithin'\)/);
+  assert.match(css, /\.quick-filter-chip\.active/);
+});
+
 test('initial dashboard load renders skeleton placeholders before API data arrives', async () => {
   const [source, css] = await Promise.all([
     readFile(appSource, 'utf8'),
@@ -132,6 +150,25 @@ test('operations view exposes local runner controls and live progress', async ()
   assert.match(source, /localRunner\('\/start'/);
   assert.match(source, /new EventSource\('\/api\/runner\/events'\)/);
   assert.match(source, /renderRunnerStatus\(state\.runnerStatus\)/);
+  assert.match(source, /api\('\/api\/runner\/supervisor'\)/);
+  assert.match(source, /function supervisorStatusText\(supervisor = \{\}\)/);
+  assert.match(html, /id="runnerPortalConcurrency"/);
+  assert.match(html, /id="runnerDetailConcurrency"/);
+  assert.match(html, /id="runnerAutoFitAfterDiscovery"/);
+  assert.match(source, /portalDiscoveryPortalConcurrency: value\('runnerPortalConcurrency'\) \|\| '4'/);
+  assert.match(source, /portalDiscoveryDetailConcurrency: value\('runnerDetailConcurrency'\) \|\| '3'/);
+  assert.match(source, /autoFitAfterDiscovery: document\.getElementById\('runnerAutoFitAfterDiscovery'\)\.checked \? '1' : '0'/);
+});
+
+test('job list marks newly discovered jobs', async () => {
+  const [source, css] = await Promise.all([
+    readFile(appSource, 'utf8'),
+    readFile(stylesSource, 'utf8'),
+  ]);
+
+  assert.match(source, /isNewJob\(job\) \? '<span class="new-job-badge">NEW<\/span>' : ''/);
+  assert.match(source, /function isNewJob\(job = \{\}\)/);
+  assert.match(css, /\.new-job-badge/);
 });
 
 test('review queue renders side-by-side package review controls', async () => {
@@ -165,4 +202,19 @@ test('job details dialog exposes editable job fields', async () => {
   assert.match(source, /data-save-job-edit/);
   assert.match(source, /api\(`\/api\/jobs\/\$\{jobId\}`,\s*\{ method: 'PATCH', body: updates \}\)/);
   assert.match(css, /\.job-edit-panel/);
+});
+
+test('job details dialog exposes screening answer generation and editing', async () => {
+  const [source, css] = await Promise.all([
+    readFile(appSource, 'utf8'),
+    readFile(stylesSource, 'utf8'),
+  ]);
+
+  assert.match(source, /api\(`\/api\/jobs\/\$\{jobId\}\/answers`\)/);
+  assert.match(source, /function renderScreeningAnswersPanel\(job, answers = \[\]\)/);
+  assert.match(source, /data-generate-answers=/);
+  assert.match(source, /api\(`\/api\/jobs\/\$\{jobId\}\/answers\/generate`/);
+  assert.match(source, /api\(`\/api\/answers\/\$\{answerId\}`,\s*\{ method: 'PATCH'/);
+  assert.match(source, /api\(`\/api\/answers\/\$\{answerId\}`,\s*\{ method: 'DELETE'/);
+  assert.match(css, /\.screening-answer-card/);
 });

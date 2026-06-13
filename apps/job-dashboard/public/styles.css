@@ -213,6 +213,16 @@ h2 {
   margin-top: 14px;
 }
 
+.checkbox-field {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.checkbox-field input {
+  width: auto;
+}
+
 .table {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -424,6 +434,32 @@ h2 {
   padding: 10px;
 }
 
+.screening-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.screening-answer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.screening-answer-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.screening-answer-card textarea {
+  min-height: 110px;
+}
+
 .cover-letter-text {
   color: var(--ink);
   line-height: 1.55;
@@ -508,6 +544,35 @@ h2 {
   gap: 12px;
 }
 
+.quick-filter-group {
+  align-content: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-filter-group > span {
+  color: var(--ink);
+  flex-basis: 100%;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quick-filter-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--panel);
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.quick-filter-chip.active {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .filter-bar select[multiple] {
   min-height: 92px;
 }
@@ -547,6 +612,23 @@ h2 {
   font-size: 12px;
   color: var(--accent);
   font-weight: 700;
+}
+
+.new-job-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #dff7ef;
+  color: #087f5b;
+  font-size: 11px;
+  font-weight: 800;
+  margin-right: 6px;
+  padding: 1px 6px;
+}
+
+:root[data-theme="dark"] .new-job-badge {
+  background: rgba(45, 212, 191, 0.16);
+  color: #6ee7b7;
 }
 
 .item p {

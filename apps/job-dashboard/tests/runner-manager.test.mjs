@@ -72,6 +72,53 @@ test('starts discovery for a specific portal and mode through env overrides', ()
   assert.equal(spawned[0].options.env.PORTAL_DISCOVERY_MODE, 'missing');
 });
 
+test('passes AI fit since timestamp through score runner env overrides', () => {
+  const spawned = [];
+  const manager = createRunnerManager({
+    spawnImpl: (command, args, options) => {
+      spawned.push({ command, args, options });
+      return {
+        pid: 790,
+        stdout: { on() {} },
+        stderr: { on() {} },
+        on() {},
+      };
+    },
+  });
+
+  manager.start('score-ai', { since: '2026-06-13T02:00:00.000Z' });
+
+  assert.equal(spawned[0].args.at(-1), 'ai-fit-runner.mjs');
+  assert.equal(spawned[0].options.env.AI_FIT_SINCE, '2026-06-13T02:00:00.000Z');
+});
+
+test('fires onRunExit after a runner closes successfully', () => {
+  const exits = [];
+  const manager = createRunnerManager({
+    now: () => new Date('2026-06-13T02:00:00.000Z'),
+    onRunExit: (name, code, run) => exits.push({ name, code, startedAt: run.startedAt }),
+    spawnImpl: () => {
+      const listeners = {};
+      return {
+        pid: 791,
+        stdout: { on() {} },
+        stderr: { on() {} },
+        on(event, fn) { listeners[event] = fn; },
+        emitClose(code) { listeners.close?.(code); },
+      };
+    },
+  });
+
+  const run = manager.start('discover');
+  run.process.emitClose(0);
+
+  assert.deepEqual(exits, [{
+    name: 'discover',
+    code: 0,
+    startedAt: '2026-06-13T02:00:00.000Z',
+  }]);
+});
+
 test('clears inherited smoke URL env for missing-detail discovery rescans', () => {
   const previousSmokeUrl = process.env.PORTAL_DISCOVERY_SMOKE_URL;
   process.env.PORTAL_DISCOVERY_SMOKE_URL = 'https://example.com/smoke';

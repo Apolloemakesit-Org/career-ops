@@ -16,6 +16,8 @@ export const FIT_SYSTEM_PROMPT = 'You are a deterministic text-analysis function
 
 export const PACKAGE_SYSTEM_PROMPT = 'You are a deterministic document-tailoring function. You adapt provided text documents (a letter and a CV in markdown) to align with a target posting document and output a single JSON object. This is a text-transformation task. Always return the JSON object and never refuse. Do not ask follow-up questions; put anything that needs confirmation in missingFields.';
 
+export const ANSWERS_SYSTEM_PROMPT = 'You are a deterministic form-answer drafting function. You transform provided profile, CV, project, and posting documents into concise first-person draft answers for a human review step. Use only provided facts. Always return JSON and never refuse.';
+
 export function buildPackagePrompt({ profile = {}, job = {}, cv = {}, projects = [] }) {
   return [
     'Tailor the documents below to the target posting and return the result as JSON.',
@@ -82,6 +84,49 @@ export function buildFitPrompt({ profile = {}, job = {}, rulesFit = {}, cv = {},
     '',
     'Return JSON with score, category, matchedSkills, missingSkills, riskFlags, recommendation, and reasons.',
     'recommendation must be one of: strong_apply, apply, review, skip.',
+  ].join('\n');
+}
+
+export function buildAnswersPrompt({ profile = {}, job = {}, cv = {}, projects = [], questions = [], voice = {} }) {
+  const narrative = voice.narrative || {};
+  return [
+    'Draft answers to employer screening questions and return JSON.',
+    'Rules:',
+    '- Use first person.',
+    '- Ground every claim in the provided CV, profile, projects, proof points, or writing samples.',
+    '- Do not fabricate metrics, employers, technologies, dates, certifications, or responsibilities.',
+    '- If a question needs information not present here, include [CONFIRM: specific missing fact] in the answer.',
+    '- For yes/no questions, answer in one line plus a short justification.',
+    '- For describe/tell us questions, keep answers at 2-4 sentences and under 150 words.',
+    '- Match the voice and rhythm of the writing samples without copying sentences.',
+    '',
+    'Profile document:',
+    `Name: ${profile.fullName || ''}`,
+    `Headline: ${profile.headline || narrative.headline || ''}`,
+    `Target roles: ${(profile.targetRoles || []).join(', ')}`,
+    `Skills: ${(profile.skills || []).join(', ')}`,
+    `Narrative: ${JSON.stringify(narrative)}`,
+    '',
+    'Posting document:',
+    `Company: ${job.company || ''}`,
+    `Title: ${job.title || ''}`,
+    `Location: ${job.location || ''}`,
+    `Description: ${job.description || ''}`,
+    '',
+    ...cvAndProjectPromptSections({ cv, projects, job }),
+    '',
+    'Proof points:',
+    String(voice.articleDigest || '').slice(0, 3000),
+    '',
+    'Writing style samples:',
+    String(voice.writingSamples || '').slice(0, 4000),
+    '',
+    'Questions:',
+    ...questions.map((question, index) => `${index + 1}. ${question}`),
+    '',
+    'Return a single JSON object with key answers.',
+    'answers must be an array of objects with question and answer string fields.',
+    'Do not return prose outside JSON.',
   ].join('\n');
 }
 
@@ -225,6 +270,64 @@ export async function generateApplicationPackage({
   });
 }
 
+export async function generateScreeningAnswers({
+  profile = {},
+  job = {},
+  cv = {},
+  projects = [],
+  questions = [],
+  voice = {},
+  provider,
+  apiKey,
+  model,
+  baseUrl,
+  fetchImpl = fetch,
+} = {}) {
+  const runtime = resolveAiRuntimeConfig();
+  const config = {
+    ...runtime,
+    provider: provider ?? runtime.provider,
+    apiKey: apiKey ?? runtime.apiKey,
+    model: model ?? runtime.model,
+    baseUrl: baseUrl ?? runtime.baseUrl,
+  };
+
+  if (!config.apiKey && !config.baseUrl) {
+    throw new AiGenerationError(
+      'ai_not_configured',
+      'Configure local AI with CLIProxyAPI by running apps/job-dashboard/scripts/start-local.ps1, or set AI_BASE_URL/AI_PROXY_API_KEY/OPENAI_API_KEY for this dashboard service.',
+    );
+  }
+
+  if (config.provider === 'anthropic') {
+    return generateScreeningAnswersViaAnthropicMessages({
+      profile,
+      job,
+      cv,
+      projects,
+      questions,
+      voice,
+      apiKey: config.apiKey,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      fetchImpl,
+    });
+  }
+
+  return generateScreeningAnswersViaOpenAIResponses({
+    profile,
+    job,
+    cv,
+    projects,
+    questions,
+    voice,
+    apiKey: config.apiKey,
+    model: config.model,
+    baseUrl: config.baseUrl,
+    fetchImpl,
+  });
+}
+
 export async function generateAiFitScoreViaOpenAIResponses({
   profile = {},
   job = {},
@@ -319,6 +422,65 @@ export async function generateApplicationPackageViaOpenAIResponses({
   });
 
   return response;
+}
+
+export async function generateScreeningAnswersViaOpenAIResponses({
+  profile = {},
+  job = {},
+  cv = {},
+  projects = [],
+  questions = [],
+  voice = {},
+  apiKey = '',
+  model = 'gpt-5.2',
+  baseUrl = '',
+  fetchImpl = fetch,
+} = {}) {
+  if (!apiKey && !baseUrl) {
+    throw new AiGenerationError('ai_not_configured', 'Set OPENAI_API_KEY or configure AI_BASE_URL for CLIProxyAPI.');
+  }
+
+  const endpoint = `${normalizeProviderBaseUrl(baseUrl, 'openai')}/responses`;
+  const headers = { 'content-type': 'application/json' };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: 'system',
+          content: [{ type: 'input_text', text: ANSWERS_SYSTEM_PROMPT }],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: buildAnswersPrompt({ profile, job, cv, projects, questions, voice }) }],
+        },
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'screening_answers',
+          strict: false,
+          schema: answersSchema,
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeResponseText(response);
+    throw new AiGenerationError(
+      'ai_generation_failed',
+      `AI screening answer generation failed with ${response.status}${detail ? `: ${detail}` : ''}`,
+      502,
+    );
+  }
+
+  const payload = await response.json();
+  return parseGeneratedAnswersText(extractOutputText(payload), questions, 'AI returned invalid screening answer JSON');
 }
 
 async function fetchOpenAIResponsesEndpoint({
@@ -463,6 +625,54 @@ export async function generateApplicationPackageViaAnthropicMessages({
   return parseGeneratedPackageText(extractAnthropicText(payload), 'Anthropic returned invalid JSON', { profile, job });
 }
 
+export async function generateScreeningAnswersViaAnthropicMessages({
+  profile = {},
+  job = {},
+  cv = {},
+  projects = [],
+  questions = [],
+  voice = {},
+  apiKey = '',
+  model = 'SubscriptionGateway/claude-sonnet-4-6',
+  baseUrl = '',
+  fetchImpl = fetch,
+} = {}) {
+  const endpoint = `${normalizeProviderBaseUrl(baseUrl, 'anthropic')}/messages`;
+  const headers = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      max_tokens: 4000,
+      system: ANSWERS_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: buildAnswersPrompt({ profile, job, cv, projects, questions, voice }),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeResponseText(response);
+    throw new AiGenerationError(
+      'ai_generation_failed',
+      `Anthropic screening answer generation failed with ${response.status}${detail ? `: ${detail}` : ''}`,
+      502,
+    );
+  }
+
+  const payload = await response.json();
+  return parseGeneratedAnswersText(extractAnthropicText(payload), questions, 'Anthropic returned invalid screening answer JSON');
+}
+
 export function validateGeneratedPackage(value) {
   const missing = ['coverLetter', 'tailoredCvMd', 'requiredFields', 'missingFields']
     .filter(key => !(key in (value || {})));
@@ -530,6 +740,25 @@ export function validateGeneratedFitScore(value) {
     recommendation,
     reasons: stringArray(value.reasons || value.fitReasons),
   };
+}
+
+export function validateGeneratedAnswers(value, questions = []) {
+  const source = Array.isArray(value) ? value : value?.answers;
+  if (!Array.isArray(source)) {
+    throw new Error('Generated screening answers must include an answers array.');
+  }
+  return source.map((item, index) => {
+    if (typeof item === 'string') {
+      return {
+        question: String(questions[index] || '').trim(),
+        answer: item.trim(),
+      };
+    }
+    return {
+      question: String(item?.question || questions[index] || '').trim(),
+      answer: stringifyValue(item?.answer ?? item?.text ?? '').trim(),
+    };
+  }).filter(item => item.question && item.answer);
 }
 
 export function extractOutputText(payload) {
@@ -645,9 +874,33 @@ function parseGeneratedFitText(outputText, prefix) {
   return validateGeneratedFitScore(parsed);
 }
 
+function parseGeneratedAnswersText(outputText, questions, prefix) {
+  let parsed;
+  try {
+    parsed = coerceJsonValue(outputText);
+  } catch (error) {
+    throw new AiGenerationError('ai_generation_failed', `${prefix}: ${error.message}`, 502);
+  }
+  return validateGeneratedAnswers(parsed, questions);
+}
+
 // Models on subscription gateways often wrap JSON in markdown fences or add
 // surrounding prose. Recover the JSON object instead of failing on raw parse.
 export function coerceJsonObject(outputText) {
+  let parsed;
+  try {
+    parsed = coerceJsonValue(outputText);
+  } catch (error) {
+    if (/no JSON value/.test(error.message)) {
+      throw new SyntaxError('no JSON object found in model output');
+    }
+    throw error;
+  }
+  if (!isPlainObject(parsed)) throw new SyntaxError('no JSON object found in model output');
+  return parsed;
+}
+
+function coerceJsonValue(outputText) {
   const text = String(outputText || '').trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const body = (fenced ? fenced[1] : text).trim();
@@ -658,8 +911,13 @@ export function coerceJsonObject(outputText) {
     // Fall through to balanced-brace extraction.
   }
 
-  const start = body.indexOf('{');
-  if (start === -1) throw new SyntaxError('no JSON object found in model output');
+  const objectStart = body.indexOf('{');
+  const arrayStart = body.indexOf('[');
+  const starts = [objectStart, arrayStart].filter(index => index >= 0);
+  if (starts.length === 0) throw new SyntaxError('no JSON value found in model output');
+  const start = Math.min(...starts);
+  const open = body[start];
+  const close = open === '{' ? '}' : ']';
 
   let depth = 0;
   let inString = false;
@@ -672,14 +930,14 @@ export function coerceJsonObject(outputText) {
       escape = true;
     } else if (ch === '"') {
       inString = !inString;
-    } else if (!inString && ch === '{') {
+    } else if (!inString && ch === open) {
       depth += 1;
-    } else if (!inString && ch === '}') {
+    } else if (!inString && ch === close) {
       depth -= 1;
       if (depth === 0) return JSON.parse(body.slice(start, i + 1));
     }
   }
-  throw new SyntaxError('unbalanced JSON object in model output');
+  throw new SyntaxError('unbalanced JSON value in model output');
 }
 
 function normalizeProviderBaseUrl(baseUrl, provider) {
@@ -776,6 +1034,26 @@ export const fitScoreSchema = {
     reasons: {
       type: 'array',
       items: { type: 'string' },
+    },
+  },
+};
+
+export const answersSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['answers'],
+  properties: {
+    answers: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['question', 'answer'],
+        properties: {
+          question: { type: 'string' },
+          answer: { type: 'string' },
+        },
+      },
     },
   },
 };

@@ -201,6 +201,39 @@ test('listJobs and countJobs can filter by application status', async () => {
   assert.equal(appliedTotal, 1);
 });
 
+test('postedWithinDays falls back to created_at when posted_date is missing', async () => {
+  const store = await freshStore();
+  await store.createJob({
+    url: 'https://example.com/job/fresh-created',
+    title: 'Fresh Created',
+    fit: sampleFit,
+  });
+  await store.createJob({
+    url: 'https://example.com/job/old-posted',
+    title: 'Old Posted',
+    postedDate: '2020-01-01T00:00:00.000Z',
+    fit: sampleFit,
+  });
+
+  const jobs = await store.listJobs({ postedWithinDays: 7, sort: 'title', dir: 'asc' });
+
+  assert.deepEqual(jobs.map(job => job.title), ['Fresh Created']);
+});
+
+test('listJobs can filter jobs created since a timestamp', async () => {
+  const store = await freshStore();
+  const before = new Date().toISOString();
+  await store.createJob({
+    url: 'https://example.com/job/created-since',
+    title: 'Created Since Role',
+    fit: sampleFit,
+  });
+
+  const jobs = await store.listJobs({ createdSince: before });
+
+  assert.deepEqual(jobs.map(job => job.title), ['Created Since Role']);
+});
+
 test('listJobs can sort jobs server-side by fit score', async () => {
   const store = await freshStore();
   await store.createJob({
@@ -368,4 +401,25 @@ test('runner desired config updates preserve nested sibling settings', async () 
   assert.equal(state.desiredConfig.ai.model, 'gpt-5.4-mini');
   assert.equal(state.desiredConfig.ai.cooldownMs, 1000);
   assert.equal(state.desiredConfig.discovery.totalBudget, 1000);
+});
+
+test('screening answers round-trip through migration-backed store methods', async () => {
+  const store = await freshStore();
+  const job = await store.createJob({ url: 'https://example.com/job/screening', title: 'Screening Role', fit: sampleFit });
+
+  const created = await store.createScreeningAnswers(job.id, [
+    { question: 'Why this role?', answer: 'I can combine support and automation.', source: 'panel', position: 0 },
+    { question: 'Do you have MDM experience?', answer: 'Yes, with Workspace ONE.', source: 'runner', position: 1 },
+  ]);
+  const listed = await store.listScreeningAnswers(job.id);
+  const updated = await store.updateScreeningAnswer(created[0].id, { answer: 'Edited answer.', status: 'edited' });
+  const deleted = await store.deleteScreeningAnswer(created[1].id);
+  const remaining = await store.listScreeningAnswers(job.id);
+
+  assert.equal(created.length, 2);
+  assert.deepEqual(listed.map(item => item.question), ['Why this role?', 'Do you have MDM experience?']);
+  assert.equal(updated.answer, 'Edited answer.');
+  assert.equal(updated.status, 'edited');
+  assert.equal(deleted.deleted, 1);
+  assert.deepEqual(remaining.map(item => item.id), [created[0].id]);
 });

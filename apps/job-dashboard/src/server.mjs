@@ -9,7 +9,8 @@ import { createPool, ensureSqliteAvailable, waitForDatabase } from './db.mjs';
 import { migrate } from './schema.mjs';
 import { createPostgresStore, dispatchApi } from './routes.mjs';
 import { resolveAiRuntimeConfig } from './ai-generator.mjs';
-import { envFromLocalConfig, loadLocalConfig } from '../runner/local-config.mjs';
+import { createRunnerSupervisor } from './runner-supervisor.mjs';
+import { envFromLocalConfig, loadLocalConfig, redactLocalConfig, saveLocalConfig } from '../runner/local-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', 'public');
@@ -40,7 +41,8 @@ export function createDashboardServer({
         return;
       }
       const body = await readJsonBody(req);
-      const response = await dispatchApi({ method: req.method || 'GET', url: req.url, body }, store, services);
+      const resolvedServices = typeof services === 'function' ? await services() : services;
+      const response = await dispatchApi({ method: req.method || 'GET', url: req.url, body }, store, resolvedServices);
       
       // If dispatchApi signals SSE (for routes it doesn't want to handle fully)
       if (response.sse) {
@@ -117,6 +119,7 @@ export function resolveDashboardServices({
 export function attachShutdownHandlers({
   server,
   pool,
+  supervisor,
   processLike = process,
 } = {}) {
   let shuttingDown = false;
@@ -124,6 +127,7 @@ export function attachShutdownHandlers({
     if (shuttingDown) return;
     shuttingDown = true;
     await new Promise(resolve => server.close(resolve));
+    supervisor?.stop?.();
     await pool.end();
     processLike.exit(0);
   };
@@ -200,10 +204,35 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const pool = createPool();
   await waitForDatabase(pool);
   await migrate(pool);
-  const server = createDashboardServer({ store: createPostgresStore(pool) });
+  let currentServices = resolveDashboardServices();
+  const reloadServices = () => {
+    currentServices = resolveDashboardServices();
+    return currentServices;
+  };
+  const runnerSettings = {
+    load: loadLocalConfig,
+    save: saveLocalConfig,
+    redact: redactLocalConfig,
+    isLocal: !process.env.DATABASE_URL || process.env.CAREER_OPS_LOCAL === '1',
+  };
+  const supervisor = createRunnerSupervisor({
+    env: process.env,
+    controlScript: path.resolve(__dirname, '..', 'runner', 'control-server.mjs'),
+  });
+  const server = createDashboardServer({
+    store: createPostgresStore(pool),
+    services: () => ({
+      ...currentServices,
+      env: process.env,
+      reloadServices,
+      runnerSettings,
+      supervisor,
+    }),
+  });
   const port = Number(process.env.PORT || 3000);
   server.listen(port, () => {
     console.log(`career-ops job dashboard listening on :${port}`);
+    supervisor.start().catch(error => console.error(`runner supervisor failed: ${error.message}`));
   });
-  attachShutdownHandlers({ server, pool });
+  attachShutdownHandlers({ server, pool, supervisor });
 }

@@ -5,8 +5,32 @@ import {
   allPortalBudgetsReached,
   canImportForPortal,
   createPortalCounters,
+  groupPlanByPortal,
   recordPortalImport,
 } from '../runner/portal-discovery-core.mjs';
+
+test('groups search plan items by portal while preserving item order', () => {
+  const grouped = groupPlanByPortal([
+    { portal: 'ejobs', keyword: 'support' },
+    { portal: 'linkedin', keyword: 'python' },
+    { portal: 'eJobs', keyword: 'mdm' },
+    { portal: '', keyword: 'ignored' },
+  ]);
+
+  assert.deepEqual(grouped, [
+    {
+      portal: 'ejobs',
+      items: [
+        { portal: 'ejobs', keyword: 'support' },
+        { portal: 'ejobs', keyword: 'mdm' },
+      ],
+    },
+    {
+      portal: 'linkedin',
+      items: [{ portal: 'linkedin', keyword: 'python' }],
+    },
+  ]);
+});
 
 test('tracks per-portal imports independently from the global budget', () => {
   const counters = createPortalCounters(['ejobs', 'bestjobs']);

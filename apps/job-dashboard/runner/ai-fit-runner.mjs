@@ -11,6 +11,7 @@ const env = { ...localEnv, ...process.env };
 const dashboardUrl = env.DASHBOARD_URL || 'http://localhost:3000';
 const token = env.DASHBOARD_TOKEN || '';
 const limit = Number(env.AI_FIT_LIMIT || 40);
+const since = String(env.AI_FIT_SINCE || '').trim();
 const aiConfig = resolveAiRuntimeConfig(env);
 
 const client = createRunnerClient({ baseUrl: dashboardUrl, token });
@@ -20,10 +21,12 @@ console.log(`AI provider: ${aiConfig.provider}`);
 console.log(`AI model: ${aiConfig.model}`);
 console.log(`AI base URL: ${aiConfig.baseUrl || 'OpenAI public API'}`);
 console.log(`Scoring up to ${limit} job(s).`);
+if (since) console.log(`Only scoring jobs created since ${since}.`);
 
 const result = await scoreJobsWithAi({
   client,
   limit,
+  since,
   onLog: message => console.log(message),
   generateFitScore: ({ profile, job, rulesFit }) => generateAiFitScore({
     profile,

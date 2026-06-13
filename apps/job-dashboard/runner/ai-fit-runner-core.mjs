@@ -3,9 +3,16 @@ import { generateAiFitScore } from '../src/ai-generator.mjs';
 export function selectJobsForAiScoring({
   jobs = [],
   limit = Number(process.env.AI_FIT_LIMIT || 40),
+  since = '',
 } = {}) {
+  const sinceTime = Date.parse(since || '');
   return jobs
     .filter(job => job?.id)
+    .filter(job => {
+      if (!Number.isFinite(sinceTime)) return true;
+      const createdTime = Date.parse(job.createdAt || job.created_at || '');
+      return Number.isFinite(createdTime) && createdTime >= sinceTime;
+    })
     .filter(job => `${job.title || ''} ${job.description || ''}`.trim().length > 0)
     .slice(0, limit);
 }
@@ -14,16 +21,20 @@ export async function scoreJobsWithAi({
   client,
   generateFitScore = generateAiFitScore,
   limit = Number(process.env.AI_FIT_LIMIT || 40),
+  since = process.env.AI_FIT_SINCE || '',
   cooldownMs = Number(process.env.AI_REQUEST_COOLDOWN_MS || 0),
   wait = delay,
   onLog = () => {},
 } = {}) {
   const [profile, jobs] = await Promise.all([
     client.fetchProfile(),
-    client.fetchJobs(),
+    client.fetchJobs({
+      limit,
+      ...(since ? { createdSince: since } : {}),
+    }),
   ]);
 
-  const selected = selectJobsForAiScoring({ jobs, limit });
+  const selected = selectJobsForAiScoring({ jobs, limit, since });
   onLog(`Selected ${selected.length} job(s) for local AI fit scoring.`);
 
   let updated = 0;

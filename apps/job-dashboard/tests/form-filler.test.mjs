@@ -5,6 +5,8 @@ import {
   buildFieldCandidates,
   buildRequiredFields,
   isSubmitControl,
+  looksLikeScreeningQuestion,
+  normalizeQuestion,
 } from '../runner/form-filler.mjs';
 
 test('builds common aliases for application fields', () => {
@@ -52,4 +54,20 @@ test('recognizes submit controls as protected final actions', () => {
   assert.equal(isSubmitControl('Submit application'), true);
   assert.equal(isSubmitControl('Trimite aplicatia'), true);
   assert.equal(isSubmitControl('Save draft'), false);
+});
+
+test('classifies employer screening questions without catching standard fields', () => {
+  assert.equal(looksLikeScreeningQuestion('Why do you want to work with us?'), true);
+  assert.equal(looksLikeScreeningQuestion('Describe a time you automated a support workflow'), true);
+  assert.equal(looksLikeScreeningQuestion('De ce vrei acest rol?'), true);
+  assert.equal(looksLikeScreeningQuestion('Cover letter'), false);
+  assert.equal(looksLikeScreeningQuestion('Submit application'), false);
+  assert.equal(looksLikeScreeningQuestion('Email address'), false);
+});
+
+test('normalizes question text for stored answer reuse', () => {
+  assert.equal(
+    normalizeQuestion('Why do you want this role?'),
+    normalizeQuestion('why do you want this role'),
+  );
 });

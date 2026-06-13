@@ -14,21 +14,25 @@ import { analyzePatterns } from './pattern-analyzer.mjs';
 import {
   generateAiFitScore as defaultGenerateAiFitScore,
   generateApplicationPackage as defaultGenerateApplicationPackage,
+  generateScreeningAnswers as defaultGenerateScreeningAnswers,
 } from './ai-generator.mjs';
+import { getVoiceContext } from './voice-context.mjs';
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(srcDir, '..', '..', '..');
 const defaultCvPath = path.join(repoRoot, 'cv.md');
 
 export async function dispatchApi(request, store, services = {}) {
+  const resolvedServices = typeof services === 'function' ? await services() : services;
   const url = new URL(request.url, 'http://dashboard.local');
   const method = request.method.toUpperCase();
   const segments = url.pathname.split('/').filter(Boolean);
-  const generateApplicationPackage = services.generateApplicationPackage || defaultGenerateApplicationPackage;
-  const generateAiFitScore = services.generateAiFitScore || defaultGenerateAiFitScore;
-  const readCv = services.readCv || defaultReadCv;
-  const writeCv = services.writeCv || defaultWriteCv;
-  const fetchImpl = services.fetchImpl || fetch;
+  const generateApplicationPackage = resolvedServices.generateApplicationPackage || defaultGenerateApplicationPackage;
+  const generateAiFitScore = resolvedServices.generateAiFitScore || defaultGenerateAiFitScore;
+  const generateScreeningAnswers = resolvedServices.generateScreeningAnswers || defaultGenerateScreeningAnswers;
+  const readCv = resolvedServices.readCv || defaultReadCv;
+  const writeCv = resolvedServices.writeCv || defaultWriteCv;
+  const fetchImpl = resolvedServices.fetchImpl || fetch;
 
   try {
     if (method === 'GET' && url.pathname === '/api/health') {
@@ -175,11 +179,11 @@ export async function dispatchApi(request, store, services = {}) {
           rulesFit: jobToFit(job),
           cv: matcherContext.cv,
           projects: matcherContext.projects,
-          provider: services.aiProvider,
-          apiKey: services.aiApiKey ?? services.openaiApiKey,
-          model: services.aiModel ?? services.openaiModel,
-          baseUrl: services.aiBaseUrl,
-          fetchImpl: services.fetchImpl,
+          provider: resolvedServices.aiProvider,
+          apiKey: resolvedServices.aiApiKey ?? resolvedServices.openaiApiKey,
+          model: resolvedServices.aiModel ?? resolvedServices.openaiModel,
+          baseUrl: resolvedServices.aiBaseUrl,
+          fetchImpl: resolvedServices.fetchImpl,
         });
         return json(200, await store.updateJobFit(segments[2], generated));
       } catch (error) {
@@ -201,11 +205,11 @@ export async function dispatchApi(request, store, services = {}) {
           job,
           cv: matcherContext.cv,
           projects: matcherContext.projects,
-          provider: services.aiProvider,
-          apiKey: services.aiApiKey ?? services.openaiApiKey,
-          model: services.aiModel ?? services.openaiModel,
-          baseUrl: services.aiBaseUrl,
-          fetchImpl: services.fetchImpl,
+          provider: resolvedServices.aiProvider,
+          apiKey: resolvedServices.aiApiKey ?? resolvedServices.openaiApiKey,
+          model: resolvedServices.aiModel ?? resolvedServices.openaiModel,
+          baseUrl: resolvedServices.aiBaseUrl,
+          fetchImpl: resolvedServices.fetchImpl,
         });
         const pkg = await store.createPackage(segments[2], generated);
         return json(pkg?.wasCreated === false ? 200 : 201, pkg);
@@ -215,6 +219,57 @@ export async function dispatchApi(request, store, services = {}) {
         }
         throw error;
       }
+    }
+
+    if (method === 'GET' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'answers') {
+      const job = await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      return json(200, await store.listScreeningAnswers(segments[2]));
+    }
+
+    if (method === 'POST' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'answers' && segments[4] === 'generate') {
+      const job = await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      const questions = arrayOfStrings((request.body || {}).questions).slice(0, 20);
+      if (questions.length === 0) return json(400, { error: 'questions_required' });
+      const source = normalizeAnswerSource((request.body || {}).source);
+      const profile = await store.getProfile();
+      try {
+        const matcherContext = await getMatcherContext();
+        const generated = await generateScreeningAnswers({
+          profile,
+          job,
+          cv: matcherContext.cv,
+          projects: matcherContext.projects,
+          questions,
+          voice: (await getVoiceContext()).voice,
+          provider: resolvedServices.aiProvider,
+          apiKey: resolvedServices.aiApiKey ?? resolvedServices.openaiApiKey,
+          model: resolvedServices.aiModel ?? resolvedServices.openaiModel,
+          baseUrl: resolvedServices.aiBaseUrl,
+          fetchImpl: resolvedServices.fetchImpl,
+        });
+        return json(201, await store.createScreeningAnswers(segments[2], generated.map((item, index) => ({
+          ...item,
+          source,
+          position: index,
+        }))));
+      } catch (error) {
+        if (error.code === 'ai_not_configured' || error.code === 'ai_generation_failed') {
+          return json(error.status || 424, { error: error.code, message: error.message });
+        }
+        throw error;
+      }
+    }
+
+    if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'answers' && segments[2]) {
+      const answer = await store.updateScreeningAnswer(segments[2], request.body || {});
+      if (!answer) return json(404, { error: 'answer_not_found' });
+      return json(200, answer);
+    }
+
+    if (method === 'DELETE' && segments[0] === 'api' && segments[1] === 'answers' && segments[2]) {
+      return json(200, await store.deleteScreeningAnswer(segments[2]));
     }
 
     if (method === 'GET' && url.pathname === '/api/packages') {
@@ -277,6 +332,27 @@ export async function dispatchApi(request, store, services = {}) {
 
     if (method === 'GET' && url.pathname === '/api/runner/state') {
       return json(200, await store.getRunnerState());
+    }
+
+    if (method === 'GET' && url.pathname === '/api/runner/supervisor') {
+      return json(200, typeof resolvedServices.supervisor?.status === 'function'
+        ? resolvedServices.supervisor.status()
+        : { mode: 'unavailable' });
+    }
+
+    if (method === 'GET' && url.pathname === '/api/settings/runner') {
+      return json(200, await loadRunnerSettings({ store, runnerSettings: resolvedServices.runnerSettings }));
+    }
+
+    if (method === 'PUT' && url.pathname === '/api/settings/runner') {
+      return json(200, await saveRunnerSettings({
+        body: request.body || {},
+        store,
+        runnerSettings: resolvedServices.runnerSettings,
+        reloadServices: resolvedServices.reloadServices,
+        fetchImpl,
+        env: resolvedServices.env || process.env,
+      }));
     }
 
     if (method === 'PATCH' && url.pathname === '/api/runner/state') {
@@ -1122,6 +1198,69 @@ export function createPostgresStore(pool) {
       await appendEvent(pool, 'job', jobId, 'follow_up_created', `Follow-up recorded via ${payload.channel || 'unknown'}`, payload);
       return result.rows[0];
     },
+
+    async listScreeningAnswers(jobId) {
+      const result = await pool.query(`
+        SELECT id, job_id AS "jobId", question, answer, status, source, position,
+               created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM screening_answers
+        WHERE job_id = $1
+        ORDER BY position ASC, created_at ASC
+      `, [jobId]);
+      return result.rows;
+    },
+
+    async createScreeningAnswers(jobId, items = []) {
+      const rows = [];
+      for (const [index, item] of items.entries()) {
+        const result = await pool.query(`
+          INSERT INTO screening_answers (job_id, question, answer, status, source, position, updated_at)
+          VALUES ($1, $2, $3, 'draft', $4, $5, now())
+          RETURNING id, job_id AS "jobId", question, answer, status, source, position,
+                    created_at AS "createdAt", updated_at AS "updatedAt"
+        `, [
+          jobId,
+          String(item.question || '').trim(),
+          String(item.answer || '').trim(),
+          normalizeAnswerSource(item.source),
+          Number.isFinite(Number(item.position)) ? Number(item.position) : index,
+        ]);
+        if (result.rows[0]) rows.push(result.rows[0]);
+      }
+      if (rows.length > 0) {
+        await appendEvent(pool, 'job', jobId, 'answers_generated', `Generated ${rows.length} screening answer(s)`, { source: rows[0].source });
+      }
+      return rows;
+    },
+
+    async updateScreeningAnswer(id, updates = {}) {
+      const entries = [];
+      const params = [id];
+      if (updates.answer !== undefined) {
+        params.push(String(updates.answer || '').trim());
+        entries.push(`answer = $${params.length}`);
+      }
+      if (updates.status !== undefined) {
+        const status = normalizeAnswerStatus(updates.status);
+        if (!status) throw new Error('Unsupported screening answer status.');
+        params.push(status);
+        entries.push(`status = $${params.length}`);
+      }
+      if (entries.length === 0) return null;
+      const result = await pool.query(`
+        UPDATE screening_answers
+        SET ${entries.join(', ')}, updated_at = now()
+        WHERE id = $1
+        RETURNING id, job_id AS "jobId", question, answer, status, source, position,
+                  created_at AS "createdAt", updated_at AS "updatedAt"
+      `, params);
+      return result.rows[0] || null;
+    },
+
+    async deleteScreeningAnswer(id) {
+      const result = await pool.query('DELETE FROM screening_answers WHERE id = $1', [id]);
+      return { deleted: result.rowCount || 0 };
+    },
   };
 }
 
@@ -1340,6 +1479,7 @@ function filtersFromSearch(searchParams) {
     maxSalary: numericParam(searchParams.get('maxSalary')),
     currency: searchParams.get('currency') || '',
     postedWithinDays: numericParam(searchParams.get('postedWithinDays')),
+    createdSince: eventSinceParam(searchParams.get('createdSince')),
     minMatch: numericParam(searchParams.get('minMatch')),
     maxMatch: numericParam(searchParams.get('maxMatch')),
     incomplete: boolParam(searchParams.get('incomplete')),
@@ -1383,8 +1523,14 @@ function buildJobsWhere(filters = {}, dialect = 'postgres') {
   if (filters.postedWithinDays != null) {
     const placeholder = add(filters.postedWithinDays);
     clauses.push(dialect === 'sqlite'
-      ? `posted_date IS NOT NULL AND datetime(posted_date) >= datetime('now', '-' || ${placeholder} || ' days')`
-      : `posted_date IS NOT NULL AND posted_date >= now() - (${placeholder}::text || ' days')::interval`);
+      ? `datetime(COALESCE(posted_date, created_at)) >= datetime('now', '-' || ${placeholder} || ' days')`
+      : `COALESCE(posted_date, created_at) >= now() - (${placeholder}::text || ' days')::interval`);
+  }
+  if (filters.createdSince) {
+    const placeholder = add(filters.createdSince);
+    clauses.push(dialect === 'sqlite'
+      ? `datetime(created_at) >= datetime(${placeholder})`
+      : `created_at >= ${placeholder}`);
   }
   return {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
@@ -1436,6 +1582,95 @@ async function proxyRunner(fetchImpl, pathName, { method = 'GET', body } = {}) {
   } catch (error) {
     return { offline: true, error: 'runner_offline', message: error.message };
   }
+}
+
+async function loadRunnerSettings({ store, runnerSettings } = {}) {
+  if (runnerSettings?.isLocal && typeof runnerSettings.load === 'function') {
+    const config = runnerSettings.load();
+    return typeof runnerSettings.redact === 'function' ? runnerSettings.redact(config) : redactRunnerSecrets(config);
+  }
+
+  const state = typeof store.getRunnerState === 'function' ? await store.getRunnerState() : {};
+  return redactRunnerSecrets({
+    ...(state.config || {}),
+    ...(state.desiredConfig || {}),
+  });
+}
+
+async function saveRunnerSettings({
+  body = {},
+  store,
+  runnerSettings,
+  reloadServices,
+  fetchImpl,
+  env = process.env,
+} = {}) {
+  if (runnerSettings?.isLocal && typeof runnerSettings.load === 'function' && typeof runnerSettings.save === 'function') {
+    const current = runnerSettings.load();
+    const merged = mergeRunnerConfig(current, body);
+    const saved = runnerSettings.save(merged);
+    if (typeof reloadServices === 'function') reloadServices();
+    const pushed = await proxyRunner(fetchImpl, '/config', { method: 'PUT', body: saved });
+    return {
+      config: typeof runnerSettings.redact === 'function' ? runnerSettings.redact(saved) : redactRunnerSecrets(saved),
+      runnerPushed: !pushed.offline && !pushed.error,
+      runner: pushed,
+      warnings: runnerSettingsWarnings(env),
+    };
+  }
+
+  const state = typeof store.getRunnerState === 'function' ? await store.getRunnerState() : {};
+  const current = {
+    ...(state.config || {}),
+    ...(state.desiredConfig || {}),
+  };
+  const desired = mergeRunnerConfig(current, body);
+  const updated = await store.updateRunnerDesiredConfig(desired);
+  return {
+    config: redactRunnerSecrets(desired),
+    runnerPushed: false,
+    runner: updated,
+    warnings: runnerSettingsWarnings(env),
+  };
+}
+
+function mergeRunnerConfig(current = {}, incoming = {}) {
+  const merged = {
+    ...current,
+    ...incoming,
+  };
+  for (const key of ['dashboardToken', 'aiProxyApiKey', 'cliProxyManagementKey']) {
+    if (!String(incoming[key] || '').trim() || incoming[key] === 'configured') {
+      merged[key] = current[key] || '';
+    }
+  }
+  return merged;
+}
+
+function redactRunnerSecrets(config = {}) {
+  return {
+    ...config,
+    dashboardToken: config.dashboardToken ? 'configured' : '',
+    aiProxyApiKey: config.aiProxyApiKey ? 'configured' : '',
+    cliProxyManagementKey: config.cliProxyManagementKey ? 'configured' : '',
+  };
+}
+
+function runnerSettingsWarnings(env = {}) {
+  const overrideKeys = [
+    'AI_PROVIDER',
+    'OPENAI_PROVIDER',
+    'AI_BASE_URL',
+    'OPENAI_BASE_URL',
+    'AI_MODEL',
+    'OPENAI_MODEL',
+    'AI_PROXY_API_KEY',
+    'AI_API_KEY',
+    'OPENAI_API_KEY',
+  ].filter(key => String(env[key] || '').trim());
+  return overrideKeys.length > 0
+    ? [{ code: 'env_overrides_active', keys: overrideKeys }]
+    : [];
 }
 
 function csvParam(value) {
@@ -1524,4 +1759,14 @@ function normalizeRunnerName(value) {
     throw new Error(`Unsupported runner command: ${runner}`);
   }
   return runner;
+}
+
+function normalizeAnswerStatus(value) {
+  const status = String(value || '').trim();
+  return ['draft', 'edited', 'used'].includes(status) ? status : '';
+}
+
+function normalizeAnswerSource(value) {
+  const source = String(value || '').trim();
+  return ['panel', 'runner'].includes(source) ? source : 'panel';
 }

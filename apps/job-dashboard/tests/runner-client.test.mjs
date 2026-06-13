@@ -124,20 +124,49 @@ test('fetches portal configuration and creates AI-generated packages', async () 
   assert.equal(calls[2].options.method, 'POST');
 });
 
-test('fetchJobs unwraps paginated dashboard responses for runners', async () => {
+test('fetches and generates screening answers for apply runner', async () => {
+  const calls = [];
   const client = createRunnerClient({
     baseUrl: 'https://dashboard.example/',
-    fetchImpl: async () => jsonResponse({
-      jobs: [{ id: 'job-1' }, { id: 'job-2' }],
-      limit: 50,
-      offset: 0,
-      total: 2,
-    }),
+    token: 'secret',
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (String(url).endsWith('/api/jobs/job-1/answers')) {
+        return jsonResponse([{ id: 'answer-1', question: 'Why?', answer: 'Because.' }]);
+      }
+      return jsonResponse([{ id: 'answer-2', question: 'How?', answer: 'Carefully.' }]);
+    },
   });
 
-  const jobs = await client.fetchJobs();
+  const existing = await client.fetchAnswers('job-1');
+  const generated = await client.generateAnswers('job-1', ['How?'], 'runner');
+
+  assert.equal(existing[0].answer, 'Because.');
+  assert.equal(generated[0].answer, 'Carefully.');
+  assert.equal(calls[1].url, 'https://dashboard.example/api/jobs/job-1/answers/generate');
+  assert.equal(calls[1].options.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[1].options.body), { questions: ['How?'], source: 'runner' });
+});
+
+test('fetchJobs unwraps paginated dashboard responses for runners', async () => {
+  const calls = [];
+  const client = createRunnerClient({
+    baseUrl: 'https://dashboard.example/',
+    fetchImpl: async url => {
+      calls.push(String(url));
+      return jsonResponse({
+        jobs: [{ id: 'job-1' }, { id: 'job-2' }],
+        limit: 50,
+        offset: 0,
+        total: 2,
+      });
+    },
+  });
+
+  const jobs = await client.fetchJobs({ createdSince: '2026-06-13T02:00:00.000Z' });
 
   assert.deepEqual(jobs.map(job => job.id), ['job-1', 'job-2']);
+  assert.match(calls[0], /createdSince=2026-06-13T02%3A00%3A00.000Z/);
 });
 
 function jsonResponse(body) {

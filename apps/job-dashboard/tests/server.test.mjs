@@ -174,6 +174,33 @@ test('explicit AI env configuration wins over local runner config', () => {
   assert.equal(services.aiApiKey, 'env-key');
 });
 
+test('dashboard server resolves service functions for each API request', async () => {
+  let calls = 0;
+  const server = createDashboardServer({
+    store: {
+      async getProfile() { return {}; },
+    },
+    services: () => {
+      calls += 1;
+      return {
+        readCv: async () => `# CV ${calls}`,
+      };
+    },
+  });
+
+  await listen(server);
+  try {
+    const baseUrl = addressFor(server);
+    const first = await (await fetch(`${baseUrl}/api/cv`)).json();
+    const second = await (await fetch(`${baseUrl}/api/cv`)).json();
+
+    assert.equal(first.markdown, '# CV 1');
+    assert.equal(second.markdown, '# CV 2');
+  } finally {
+    await close(server);
+  }
+});
+
 test('server startup waits for database connectivity before migrations', async () => {
   const source = await readFile(new URL('../src/server.mjs', import.meta.url), 'utf8');
 
@@ -198,6 +225,11 @@ test('shutdown handlers close the HTTP server and database pool before exit', as
         calls.push('pool.end');
       },
     },
+    supervisor: {
+      stop() {
+        calls.push('supervisor.stop');
+      },
+    },
     processLike: {
       on(signal, handler) {
         handlers[signal] = handler;
@@ -213,7 +245,7 @@ test('shutdown handlers close the HTTP server and database pool before exit', as
 
   await shutdown();
 
-  assert.deepEqual(calls, ['server.close', 'pool.end', 'exit:0']);
+  assert.deepEqual(calls, ['server.close', 'supervisor.stop', 'pool.end', 'exit:0']);
 });
 
 function listen(server) {
